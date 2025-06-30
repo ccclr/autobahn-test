@@ -126,9 +126,9 @@ def remote(ctx, debug=True):
         'nodes': [4],
         'workers': 1,
         'co-locate': True,
-        'rate': [10_000],
+        'rate': [100_000],
         'tx_size': 512,
-        'duration': 20,
+        'duration': 60,
         'runs': 1,
 
         # Unused
@@ -233,10 +233,15 @@ def latency(ctx):
         results = []
         for _ in range(repeat):
             try:
-                start = time.time()
                 conn = Connection(host=dst, user=settings.username, connect_kwargs=connect_kwargs)
+
+                conn.run("echo warmup", hide=True, timeout=5)
+                
+                start = time.time()
                 conn.run("echo hello", hide=True, timeout=5)
                 end = time.time()
+                
+                conn.close()
                 results.append((end - start) * 1000)
             except Exception as e:
                 print(f"Error SSH {src} → {dst}: {e}")
@@ -258,10 +263,6 @@ def latency(ctx):
         vals = [L[i][j] for i in range(m) for j in range(m) if i != j and not np.isnan(L[i][j])]
         return np.mean(vals)
 
-    def latency_variance(L, mu):
-        vals = [L[i][j] for i in range(m) for j in range(m) if i != j and not np.isnan(L[i][j])]
-        return np.mean([(x - mu) ** 2 for x in vals])
-
     def asymmetry(L):
         vals = [abs(L[i][j] - L[j][i]) / (L[i][j] + L[j][i])
                 for i in range(m) for j in range(m)
@@ -269,9 +270,7 @@ def latency(ctx):
         return np.mean(vals)
 
     mu = average_latency(latency_matrix)
-    var = latency_variance(latency_matrix, mu)
     asym = asymmetry(latency_matrix)
 
     print(f"\nAverage SSH Latency: {mu:.2f} ms")
-    print(f"Latency Variance: {var:.2f}")
     print(f"Asymmetry Degree: {asym:.4f}")
