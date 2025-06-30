@@ -203,9 +203,6 @@ impl Committer {
             },
             _ => {},
         };
-                // === DAG snapshot 统计 ===
-        // 注意：observe_header 应在 Header propose 时调用，这里只调用 observe_commit
-
         
     }
 
