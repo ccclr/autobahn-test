@@ -15,12 +15,6 @@ use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use crate::dag_snapshot::DagSnapshot;
-use std::time::Instant;
-use std::time::Duration;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
 
 /// The representation of the DAG in memory.
 type Dag = HashMap<Height, HashMap<PublicKey, (Digest, Certificate)>>;
@@ -84,9 +78,6 @@ pub struct Committer {
     tx_output: Sender<Header>,
     synchronizer: Synchronizer,
     genesis: Vec<Certificate>,
-    pub dag_snapshot: Arc<Mutex<DagSnapshot>>,
-    snapshot_interval :Duration,
-    last_report :Instant,
 }
 
 impl Committer {
@@ -99,14 +90,10 @@ impl Committer {
         rx_commit_message: Receiver<(ConsensusMessage, bool)>,
         tx_output: Sender<Header>,
         synchronizer: Synchronizer,
-        dag_snapshot: Arc<Mutex<DagSnapshot>>,
     ) {
         let (tx_deliver, rx_deliver) = channel(CHANNEL_CAPACITY);
 
         let genesis = Certificate::genesis(&committee);
-
-        let snapshot_interval = Duration::from_secs(1);
-        let last_report = Instant::now() - snapshot_interval;
 
         //special blocks from round >1 can also have genesis as parent!!! ==> Solution: Write genesis to store
         //Alternatively, just store genesis digests and compare against
@@ -121,9 +108,6 @@ impl Committer {
                 tx_output,
                 synchronizer,
                 genesis,
-                dag_snapshot,
-                snapshot_interval,
-                last_report,
             }
             .run()
             .await;
@@ -131,8 +115,6 @@ impl Committer {
     }
 
     async fn process_commit_message(&mut self, state: &mut State, commit_message: ConsensusMessage, write_to_log: bool) {
-
-        // === 原有代码 ===
         match commit_message.clone() {
             ConsensusMessage::Commit{slot, view: _, qc: _, proposals: _} => {
                 if slot <= state.last_executed_slot {
@@ -167,14 +149,6 @@ impl Committer {
 
                                 // Commit all of the headers  //TODO: Zip all histories for fairness
                                 for header in headers { //TODO: Iter from old to new?
-                                    let mut snapshot = self.dag_snapshot.lock().await;
-                                    snapshot.observe_commit(&header, Instant::now());
-                                    let now = Instant::now();
-                                    // 周期性打印
-                                    if now.duration_since(self.last_report) > self.snapshot_interval {
-                                        snapshot.report(self.snapshot_interval);
-                                        self.last_report = now;
-                                    }
                                     if write_to_log {
                                         info!("Committed {}", header);
                                         debug!("Committed header payload key size {:?}", header.payload.keys().len());
@@ -190,8 +164,6 @@ impl Committer {
                                         debug!("Failed to send block through the output channel: {}", e);
                                     }
                                     debug!("Finish upcall");
-                                    let mut snapshot = self.dag_snapshot.lock().await;
-                                    snapshot.observe_commit(&header, Instant::now());
                                 }
                             }
                             state.last_executed_slot += 1;
@@ -203,7 +175,6 @@ impl Committer {
             },
             _ => {},
         };
-        
     }
 
     async fn run(&mut self) {
