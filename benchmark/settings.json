@@ -5,7 +5,7 @@
     },
     "port": 5000,
     "repo": {
-        "name": "autobahn-autobahn-blips",
+        "name": "autobahn",
         "url": "https://github.com/ccclr/autobahn.git",
         "branch": "master"
     },
