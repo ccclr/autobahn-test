@@ -14,9 +14,6 @@ use primary::Primary;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver};
 use worker::Worker;
-use primary::dag_snapshot::DagSnapshot;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// The default channel capacity.
 pub const CHANNEL_CAPACITY: usize = 1_000;
@@ -125,7 +122,6 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
             let (tx_committer, rx_committer) = channel(CHANNEL_CAPACITY);
             let (tx_pushdown_cert, rx_pushdown_cert) = channel(CHANNEL_CAPACITY);
             let(tx_request_header_sync, rx_request_header_sync) = channel(CHANNEL_CAPACITY);
-            let dag_snapshot = Arc::new(Mutex::new(DagSnapshot::new()));
 
             Primary::spawn(
                 name,
@@ -143,7 +139,6 @@ async fn run(matches: &ArgMatches<'_>) -> Result<()> {
                 rx_request_header_sync,
                 tx_output,
                 tx_async,
-                dag_snapshot,
             );
             /*Consensus::spawn(
                 name,

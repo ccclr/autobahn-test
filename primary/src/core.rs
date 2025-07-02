@@ -35,8 +35,6 @@ use store::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
 use std::cmp::max;
 use tokio::time::{sleep, Duration, Instant};
-use crate::dag_snapshot::DagSnapshot;
-use tokio::sync::Mutex;
 
 //use crate::messages_consensus::{QC, TC};
 #[cfg(test)]
@@ -224,7 +222,6 @@ pub struct Core {
     payload_timer_futures: FuturesUnordered<Pin<Box<dyn Future<Output = Header> + Send>>>,
     // Missed payloads
     missed_payloads: u64,
-    dag_snapshot: Arc<Mutex<DagSnapshot>>,
 }
 
 impl Core {
@@ -266,7 +263,6 @@ impl Core {
         egress_penalty: u64,
         use_expoential_timeouts: bool,
         tx_worker_async_channel: Sender<(bool, HashSet<PublicKey>)>,
-        dag_snapshot: Arc<Mutex<DagSnapshot>>,
     ) {
         tokio::spawn(async move {
             Self {
@@ -369,7 +365,6 @@ impl Core {
                 tx_worker_async_channel,
                 payload_timer_futures: FuturesUnordered::new(),
                 missed_payloads: 0,
-                dag_snapshot,
             }
             .run()
             .await;
@@ -613,10 +608,6 @@ impl Core {
                 self.send_msg(PrimaryMessage::Vote(vote), header.height(), Some(header.author), false).await;
             }
         }
-
-        let mut snapshot = self.dag_snapshot.lock().await;
-        snapshot.observe_header(&header, std::time::Instant::now());
-
         Ok(())
     }
 

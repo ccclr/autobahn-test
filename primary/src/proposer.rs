@@ -11,14 +11,10 @@ use log::debug;
 use log::info;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{sleep, Duration, Instant};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[cfg(test)]
 #[path = "tests/proposer_tests.rs"]
 pub mod proposer_tests;
-
-use crate::dag_snapshot::DagSnapshot;
 
 /// The proposer creates new headers and send them to the core for broadcasting and further processing.
 pub struct Proposer {
@@ -56,7 +52,6 @@ pub struct Proposer {
     num_active_instances: usize, 
     use_special_rule: bool, 
     is_special: bool,
-    dag_snapshot: Arc<Mutex<DagSnapshot>>,
 }
 
 impl Proposer {
@@ -71,7 +66,6 @@ impl Proposer {
         rx_workers: Receiver<(Digest, WorkerId)>,
         rx_instance: Receiver<ConsensusMessage>,
         tx_core: Sender<Header>,
-        dag_snapshot: Arc<Mutex<DagSnapshot>>,
     ) {
         /*let genesis: Vec<Digest> = Certificate::genesis(&committee)
             .iter()
@@ -100,7 +94,6 @@ impl Proposer {
                 num_active_instances: 0,
                 use_special_rule: false,
                 is_special: false,
-                dag_snapshot,
             }
             .run()
             .await;
@@ -170,9 +163,6 @@ impl Proposer {
         self.consensus_instances.clear();
         self.num_active_instances = 0;
       
-        // let mut snapshot = self.dag_snapshot.lock().await;
-        // snapshot.observe_header(&header, std::time::Instant::now());
-
         // Send the new header to the `Core` that will broadcast and process it.
         self.tx_core
             .send(header)

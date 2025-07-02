@@ -25,12 +25,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::error::Error;
 use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use std::time::Duration;
 use store::Store;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use crate::dag_snapshot::DagSnapshot;
 
 /// The default channel capacity for each channel of the primary.
 pub const CHANNEL_CAPACITY: usize = 1_000;
@@ -94,7 +92,6 @@ impl Primary {
         rx_request_header_sync: Receiver<Digest>,
         tx_output: Sender<Header>,
         tx_async: Sender<(bool, HashSet<PublicKey>)>,
-        dag_snapshot: Arc<Mutex<DagSnapshot>>,
     ) {
         let (tx_others_digests, rx_others_digests) = channel(CHANNEL_CAPACITY);
         let (tx_our_digests, rx_our_digests) = channel(CHANNEL_CAPACITY);
@@ -224,10 +221,9 @@ impl Primary {
             parameters.egress_penalty,
             parameters.use_exponential_timeouts,
             tx_async,
-            dag_snapshot.clone(),
         );
 
-        Committer::spawn(committee.clone(), store.clone(), parameters.gc_depth, rx_mempool, rx_committer, rx_commit, tx_output, synchronizer, dag_snapshot.clone());
+        Committer::spawn(committee.clone(), store.clone(), parameters.gc_depth, rx_mempool, rx_committer, rx_commit, tx_output, synchronizer);
 
         // Keeps track of the latest consensus round and allows other tasks to clean up their their internal state
         GarbageCollector::spawn(
@@ -280,7 +276,6 @@ impl Primary {
             /* rx_workers */ rx_our_digests,
             /* rx_ticket */ rx_instance,
             /* tx_core */ tx_headers,
-            dag_snapshot.clone(),
         );
 
         // The `Helper` is dedicated to reply to certificates requests from other primaries.
