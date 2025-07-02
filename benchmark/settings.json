@@ -6,7 +6,7 @@
     "port": 5000,
     "repo": {
         "name": "autobahn",
-        "url": "https://github.com/ccclr/autobahn.git",
+        "url": "https://github.com/ccclr/autobahn-test.git",
         "branch": "master"
     },
     "project_id": "just-creek-462112-j2",

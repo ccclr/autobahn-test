@@ -10,9 +10,33 @@ use config::Committee;
 use crypto::Hash as _;
 use crypto::{Digest, PublicKey};
 use log::debug;
-use std::collections::HashMap;
 use store::Store;
 use tokio::sync::mpsc::{Receiver, Sender};
+
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
+use std::fs::File;
+use std::io::Write;
+
+#[derive(Debug, Serialize)]
+pub struct DagNode {
+    digest: String,
+    author: String,
+    height: u64,
+    parents: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DagSnapshot {
+    committed_slot: u64,
+    view: u64,
+    num_nodes: usize,
+    avg_indegree: f64,
+    avg_outdegree: f64,
+    fork_count: usize,
+    nodes: Vec<DagNode>,
+}
+
 
 /// The `Synchronizer` checks if we have all batches and parents referenced by a header. If we don't, it sends
 /// a command to the `Waiter` to request the missing data.
@@ -430,6 +454,115 @@ impl Synchronizer {
                 debug!("get_header not in the store");
                 Ok(None)
             }
+        }
+    }
+
+    pub async fn collect_dag_snapshot_from_proposals(
+        &mut self,
+        slot: u64,
+        view: u64,
+        proposals: Vec<Proposal>,
+        stop_height: u64,
+    ) -> DagSnapshot {
+        use std::collections::{HashMap, HashSet};
+    
+        let mut seen = HashMap::<String, DagNode>::new();
+        let mut indegree = HashMap::<String, usize>::new();
+        let mut outdegree = HashMap::<String, usize>::new();
+        let mut height_map = HashMap::<u64, HashSet<String>>::new();
+    
+        for proposal in proposals {
+            let digest = proposal.header_digest;
+    
+            // 先取header，如果没同步好就跳过
+            let mut header = match self.get_header(digest.clone()).await.expect("storage read failure") {
+                Some(h) => h,
+                None => {
+                    debug!("Header {:?} not found, skipping proposal in snapshot", digest);
+                    continue;
+                }
+            };
+    
+            let mut current_height = header.height();
+    
+            while current_height >= stop_height {
+                let digest_str = header.digest().to_string();
+    
+                if seen.contains_key(&digest_str) {
+                    // 避免重复处理
+                    break;
+                }
+    
+                let author_str = header.author.to_string();
+                let height = header.height();
+    
+                // 这里没有直接访问 header.parents，而是用 get_parent_header 去递归
+                // 先收集所有父节点Digest
+                let parent_header_opt = match self.get_parent_header(&header).await.expect("failed to get parent header") {
+                    Some(ph) => Some(ph),
+                    None => None,
+                };
+    
+                let parent_strs = if let Some(ref parent_header) = parent_header_opt {
+                    vec![parent_header.digest().to_string()]
+                } else {
+                    vec![]
+                };
+    
+                // 统计入度，等于父节点数目
+                indegree.insert(digest_str.clone(), parent_strs.len());
+    
+                // 统计出度，父节点被引用次数++
+                for p in &parent_strs {
+                    *outdegree.entry(p.clone()).or_insert(0) += 1;
+                }
+    
+                // 统计 fork：同一高度有多个不同节点
+                height_map.entry(height).or_default().insert(digest_str.clone());
+    
+                seen.insert(digest_str.clone(), DagNode {
+                    digest: digest_str.clone(),
+                    author: author_str,
+                    height,
+                    parents: parent_strs,
+                });
+    
+                // 继续向上追溯父节点
+                if let Some(ph) = parent_header_opt {
+                    header = ph;
+                    current_height = header.height();
+                } else {
+                    break;
+                }
+            }
+        }
+    
+        let nodes: Vec<DagNode> = seen.into_values().collect();
+        let total_nodes = nodes.len();
+        let total_in: usize = indegree.values().sum();
+        let total_out: usize = outdegree.values().sum();
+        let fork_count = height_map.values().filter(|s| s.len() > 1).count();
+    
+        DagSnapshot {
+            committed_slot: slot,
+            view,
+            num_nodes: total_nodes,
+            avg_indegree: if total_nodes > 0 {
+                total_in as f64 / total_nodes as f64
+            } else { 0.0 },
+            avg_outdegree: if total_nodes > 0 {
+                total_out as f64 / total_nodes as f64
+            } else { 0.0 },
+            fork_count,
+            nodes,
+        }
+    }
+    
+
+    pub fn export_snapshot_to_file(snapshot: &DagSnapshot) {
+        let filename = format!("dag_snapshot_slot{}_view{}.json", snapshot.committed_slot, snapshot.view);
+        if let Ok(mut f) = File::create(filename) {
+            let _ = serde_json::to_writer_pretty(&mut f, snapshot);
         }
     }
 

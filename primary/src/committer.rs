@@ -3,7 +3,7 @@
 #![allow(unused_imports)]
 use crate::messages::ConsensusMessage;
 use crate::primary::{Slot, CHANNEL_CAPACITY};
-use crate::synchronizer::Synchronizer;
+use crate::synchronizer::{Synchronizer, DagSnapshot};
 use crate::{Certificate, Header, Height};
 //use crate::error::{ConsensusError, ConsensusResult};
 use config::Committee;
@@ -129,7 +129,7 @@ impl Committer {
                     let current_commit_message = state.log.get(&(state.last_executed_slot + 1)).unwrap();
                     debug!("Currently executing slot {:?}", state.last_executed_slot + 1);
                     match current_commit_message {
-                        ConsensusMessage::Commit { slot: _, view: _, qc: _, proposals } => {
+                        ConsensusMessage::Commit { slot: _, view, qc: _, proposals } => {
                             for (pk, proposal) in proposals {
                                 let stop_height = *state.last_executed_heights.get(pk).unwrap();
                                 // Don't execute proposals which are too old
@@ -165,6 +165,13 @@ impl Committer {
                                     }
                                     debug!("Finish upcall");
                                 }
+                                if state.last_executed_slot % 20 ==0{
+                                    let snapshot = self.synchronizer
+                                        .collect_dag_snapshot_from_proposals(slot, *view, proposals.values().cloned().collect(), 0)
+                                        .await;
+                                    Synchronizer::export_snapshot_to_file(&snapshot);
+                                }
+
                             }
                             state.last_executed_slot += 1;
                         },
