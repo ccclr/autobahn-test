@@ -1,0 +1,24 @@
+{
+    "key": {
+        "name": "gcp",
+        "path": "/home/ccclr0302/.ssh/gcp_rsa"
+    },
+    "port": 5000,
+    "repo": {
+        "name": "autobahn-autobahn-blips",
+        "url": "https://github.com/ccclr/autobahn.git",
+        "branch": "master"
+    },
+    "project_id": "just-creek-462112-j2",
+    "username": "ccclr0302",
+    "instances": {
+        "type": "t2d-standard-4",
+        "regions": ["asia-southeast1-a", "asia-northeast1-a", "asia-northeast2-a", "asia-east1-a"],
+        "templates": [
+            "projects/just-creek-462112-j2/regions/asia-east2/instanceTemplates/autobahn-template",
+            "projects/just-creek-462112-j2/regions/asia-east2/instanceTemplates/autobahn-template",
+            "projects/just-creek-462112-j2/regions/asia-east2/instanceTemplates/autobahn-template",
+            "projects/just-creek-462112-j2/regions/asia-east2/instanceTemplates/autobahn-template"
+        ]
+    }
+}
