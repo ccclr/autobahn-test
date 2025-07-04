@@ -128,7 +128,7 @@ def remote(ctx, debug=True):
         'co-locate': True,
         'rate': [100_000],
         'tx_size': 512,
-        'duration': 60,
+        'duration': 20,
         'runs': 1,
 
         # Unused
