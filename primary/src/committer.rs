@@ -130,14 +130,16 @@ impl Committer {
                     debug!("Currently executing slot {:?}", state.last_executed_slot + 1);
                     match current_commit_message {
                         ConsensusMessage::Commit { slot: _, view, qc: _, proposals } => {
+                            let mut last_stop_heights: HashMap<PublicKey, u64> = HashMap::new();
+
                             for (pk, proposal) in proposals {
                                 let stop_height = *state.last_executed_heights.get(pk).unwrap();
+                                last_stop_heights.insert(pk.clone(), stop_height);
                                 // Don't execute proposals which are too old
                                 if proposal.height <= stop_height {
                                     debug!("skipping this proposal because it's too old");
                                     continue;
                                 }
-
                                 let headers = self.synchronizer.get_all_headers_for_proposal(proposal.clone(), stop_height)
                                     .await
                                     .expect("should have ancestors by now");
@@ -165,14 +167,16 @@ impl Committer {
                                     }
                                     debug!("Finish upcall");
                                 }
-                                if state.last_executed_slot % 20 ==0{
-                                    let snapshot = self.synchronizer
-                                        .collect_dag_snapshot_from_proposals(slot, *view, proposals.values().cloned().collect(), 0)
-                                        .await;
-                                    Synchronizer::export_snapshot_to_file(&snapshot);
-                                }
-
                             }
+
+                            if state.last_executed_slot % 20 ==0{
+                                let snapshot = self.synchronizer
+                                    .collect_dag_snapshot_from_proposals(slot, *view, proposals.values().cloned().collect(), last_stop_heights)
+                                    .await;
+                                Synchronizer::export_snapshot_to_file(&snapshot);
+                            }
+
+
                             state.last_executed_slot += 1;
                         },
                         _ => {}

@@ -17,6 +17,7 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
+use base64;
 
 #[derive(Debug, Serialize)]
 pub struct DagNode {
@@ -34,6 +35,7 @@ pub struct DagSnapshot {
     avg_indegree: f64,
     avg_outdegree: f64,
     fork_count: usize,
+    pub last_cut_tips: HashMap<String, Height>,
     nodes: Vec<DagNode>,
 }
 
@@ -462,87 +464,81 @@ impl Synchronizer {
         slot: u64,
         view: u64,
         proposals: Vec<Proposal>,
-        stop_height: u64,
+        last_stop_heights: HashMap<PublicKey, Height>,
     ) -> DagSnapshot {
         use std::collections::{HashMap, HashSet};
-    
         let mut seen = HashMap::<String, DagNode>::new();
         let mut indegree = HashMap::<String, usize>::new();
         let mut outdegree = HashMap::<String, usize>::new();
-        let mut height_map = HashMap::<u64, HashSet<String>>::new();
+        // let mut height_map = HashMap::<PublicKey, HashMap<u64, HashSet<String>>>::new();
+
+        let proposal_digests: HashSet<String> = proposals.iter().map(|p| p.header_digest.to_string()).collect();
     
         for proposal in proposals {
-            let digest = proposal.header_digest;
-    
-            // 先取header，如果没同步好就跳过
-            let mut header = match self.get_header(digest.clone()).await.expect("storage read failure") {
+            let digest = proposal.header_digest.clone();
+            // proposal 的 author
+            // 由于 Proposal 结构体没有 author 字段，需要通过 header 获取
+            let header = match self.get_header(digest.clone()).await.expect("storage read failure") {
                 Some(h) => h,
                 None => {
                     debug!("Header {:?} not found, skipping proposal in snapshot", digest);
                     continue;
                 }
             };
-    
-            let mut current_height = header.height();
-    
-            while current_height >= stop_height {
+            let pk = header.author;
+            let stop_height = *last_stop_heights.get(&pk).unwrap_or(&0);
+            let headers = self.get_all_headers_for_proposal(proposal.clone(), 0)
+                .await
+                .expect("should have ancestors by now");
+            for header in headers {
                 let digest_str = header.digest().to_string();
-    
-                if seen.contains_key(&digest_str) {
-                    // 避免重复处理
-                    break;
-                }
-    
-                let author_str = header.author.to_string();
+                let author = header.author;
                 let height = header.height();
-    
-                // 这里没有直接访问 header.parents，而是用 get_parent_header 去递归
-                // 先收集所有父节点Digest
+                if seen.contains_key(&digest_str) {
+                    continue;
+                }
                 let parent_header_opt = match self.get_parent_header(&header).await.expect("failed to get parent header") {
                     Some(ph) => Some(ph),
                     None => None,
                 };
-    
                 let parent_strs = if let Some(ref parent_header) = parent_header_opt {
                     vec![parent_header.digest().to_string()]
                 } else {
                     vec![]
                 };
-    
-                // 统计入度，等于父节点数目
                 indegree.insert(digest_str.clone(), parent_strs.len());
-    
-                // 统计出度，父节点被引用次数++
                 for p in &parent_strs {
                     *outdegree.entry(p.clone()).or_insert(0) += 1;
                 }
-    
-                // 统计 fork：同一高度有多个不同节点
-                height_map.entry(height).or_default().insert(digest_str.clone());
-    
                 seen.insert(digest_str.clone(), DagNode {
                     digest: digest_str.clone(),
-                    author: author_str,
+                    author: author.to_string(),
                     height,
                     parents: parent_strs,
                 });
-    
-                // 继续向上追溯父节点
-                if let Some(ph) = parent_header_opt {
-                    header = ph;
-                    current_height = header.height();
-                } else {
-                    break;
-                }
             }
         }
-    
+
         let nodes: Vec<DagNode> = seen.into_values().collect();
         let total_nodes = nodes.len();
         let total_in: usize = indegree.values().sum();
         let total_out: usize = outdegree.values().sum();
-        let fork_count = height_map.values().filter(|s| s.len() > 1).count();
-    
+        
+        let mut fork_count = 0;
+        let mut author_height_map: HashMap<(String, u64), HashSet<String>> = HashMap::new();
+        for node in &nodes {
+            let key = (node.author.clone(), node.height);
+            author_height_map.entry(key).or_insert_with(HashSet::new).insert(node.digest.clone());
+        }
+        for (_key, set) in author_height_map.iter() {
+            if set.len() > 1 {
+                fork_count += 1;
+            }
+        }
+
+        let last_cut_tips: HashMap<String, Height> = last_stop_heights.into_iter()
+            .map(|(pk, h)| (pk.encode_base64(), h))
+            .collect();
         DagSnapshot {
             committed_slot: slot,
             view,
@@ -554,11 +550,11 @@ impl Synchronizer {
                 total_out as f64 / total_nodes as f64
             } else { 0.0 },
             fork_count,
+            last_cut_tips,
             nodes,
         }
     }
     
-
     pub fn export_snapshot_to_file(snapshot: &DagSnapshot) {
         let filename = format!("dag_snapshot_slot{}_view{}.json", snapshot.committed_slot, snapshot.view);
         if let Ok(mut f) = File::create(filename) {
