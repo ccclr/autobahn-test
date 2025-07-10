@@ -1,6 +1,7 @@
 import json
 import networkx as nx
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 from collections import defaultdict
 
 # 读取 committee，建立 author->validator 的映射
@@ -11,10 +12,11 @@ with open('/home/ccclr0302/autobahn-test/benchmark/.committee.json', 'r') as f:
 authority_keys = list(committee['authorities'].keys())
 
 # 读取 DAG 快照
-with open('/home/ccclr0302/autobahn-test/benchmark/dag_snapshot_slot61_view1.json', 'r') as f:
+with open('/home/ccclr0302/dag_snapshot_slot21_view1.json', 'r') as f:
     data = json.load(f)
 
 nodes = data['nodes']
+
 
 # 建立 author（短名）到 validator（完整key）的映射
 author_map = {}
@@ -29,6 +31,20 @@ for short in set(n['author'] for n in nodes):
 # 统计所有 validator（按 committee 顺序）
 validators = [k for k in authority_keys]
 validator_pos = {v: i for i, v in enumerate(validators)}
+
+
+# === Step 1: 找出每个 validator 的最高高度节点（active tip） ===
+validator_latest = {}  # validator -> (height, digest)
+
+for node in nodes:
+    v = author_map.get(node['author'], node['author'])
+    h = node['height']
+    digest = node['digest']
+    if v not in validator_latest or h > validator_latest[v][0]:
+        validator_latest[v] = (h, digest)
+
+active_tips = set(d for (_, d) in validator_latest.values())
+
 
 # 统计所有 round（height）的绝对值
 heights = sorted(set(n['height'] for n in nodes))
@@ -56,15 +72,24 @@ for node, attr in G.nodes(data=True):
 
 plt.figure(figsize=(max(8, len(heights)), max(6, len(validators))))
 
-# 画节点（圆点）
+node_colors = []
+for node in pos:
+    if node in active_tips:
+        node_colors.append("orange")  # active tip
+    elif G.out_degree(node) == 0:
+        node_colors.append("gray")    # orphaned tip
+    else:
+        node_colors.append("white")   # internal node
+
 nx.draw_networkx_nodes(
     G, pos,
     nodelist=list(pos.keys()),
     node_size=300,
-    node_color='orange',
+    node_color=node_colors,
     edgecolors='black',
     linewidths=1
 )
+
 
 # 画有箭头的边
 edges_to_draw = [(u, v) for u, v in G.edges() if u in pos and v in pos]
@@ -103,6 +128,13 @@ for h in heights:
 for v, y in validator_pos.items():
     plt.text(min(heights)-1, -y, v[:8], ha='right', va='center', fontsize=10)
 
+# legend_elements = [
+#     Patch(facecolor='orange', edgecolor='black', label='Active Tip (used for cut)'),
+#     Patch(facecolor='gray', edgecolor='black', label='Orphaned Tip (not used)'),
+#     Patch(facecolor='white', edgecolor='black', label='Internal Node'),
+#     Patch(color='blue', label='Cut Line')
+# ]
+# plt.legend(handles=legend_elements, loc='lower left')
 plt.axis('off')
 plt.title(f"DAG Snapshot (slot {data['committed_slot']}, view {data['view']})")
 plt.tight_layout()

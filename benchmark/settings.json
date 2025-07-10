@@ -5,20 +5,17 @@
     },
     "port": 5000,
     "repo": {
-        "name": "autobahn-blips-test",
+        "name": "autobahn",
         "url": "https://github.com/ccclr/autobahn-test.git",
         "branch": "master"
     },
     "project_id": "just-creek-462112-j2",
     "username": "ccclr0302",
     "instances": {
-        "type": "t2d-standard-4",
-        "regions": ["asia-southeast1-a", "asia-northeast1-a", "asia-northeast2-a", "asia-east1-a"],
+        "type": "t2d-standard-2",
+        "regions": [" asia-east2-a", "asia-east1-a", "asia-northeast1-a", "asia-south1-a", "asia-northeast2-a", "asia-south2-a ", "asia-south2-a"],
         "templates": [
-            "projects/just-creek-462112-j2/regions/asia-east2/instanceTemplates/autobahn-template",
-            "projects/just-creek-462112-j2/regions/asia-east2/instanceTemplates/autobahn-template",
-            "projects/just-creek-462112-j2/regions/asia-east2/instanceTemplates/autobahn-template",
-            "projects/just-creek-462112-j2/regions/asia-east2/instanceTemplates/autobahn-template"
+            "projects/just-creek-462112-j2/regions/asia-east1/instanceTemplates/autobahn-template-asia-east1"
         ]
     }
 }
