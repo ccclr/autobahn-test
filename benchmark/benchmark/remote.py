@@ -115,8 +115,8 @@ class Bench:
                 return []
 
             # Select the hosts in different data centers.
-            ordered = zip(*hosts.values())
-            ordered = [x for y in ordered for x in y]
+            ordered = [x for y in hosts.values() for x in y]
+            assert len(ordered) >= nodes, f"Not enough hosts: got {len(ordered)}, need {nodes}"
             return ordered[:nodes]
 
         # Spawn the primary and each worker on a different machine. Each
@@ -150,8 +150,8 @@ class Bench:
                 return []
 
             # Select the hosts in different data centers.
-            ordered = zip(*hosts.values())
-            ordered = [x for y in ordered for x in y]
+            ordered = [x for y in hosts.values() for x in y]
+            assert len(ordered) >= nodes, f"Not enough hosts: got {len(ordered)}, need {nodes}"
             return ordered[:nodes]
 
         # Spawn the primary and each worker on a different machine. Each
