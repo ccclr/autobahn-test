@@ -16,6 +16,8 @@ from re import findall, search, split
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from itertools import cycle
+from os.path import join, abspath
+
 
 
 # --- PARSE DATA ---
@@ -105,6 +107,9 @@ class LogAggregator:
         assert all(isinstance(x, str) for x in files)
         assert isinstance(max_latencies, list)
         assert all(isinstance(x, int) for x in max_latencies)
+        
+        print(f"[debug] parsing {len(files)} files for system: {system}")
+
 
         self.system = system
         self.max_latencies = max_latencies
@@ -224,7 +229,7 @@ class Ploter:
         plt.figure(figsize=(width, height))
         self.reset_markers()
         self.reset_linestyles()
-        self.colors = cycle(['tab:green', 'tab:blue', 'tab:orange', 'tab:red'])
+        self.colors = cycle(['tab:green', 'tab:blue', 'tab:orange', 'tab:red', 'tab:purple'])
 
     def reset_markers(self):
         self.markers = cycle(['o', 'v', 's', 'd'])
@@ -421,18 +426,21 @@ class Ploter:
 
 if __name__ == '__main__':
     max_latencies = [3_000, 5_000]  # For TPS graphs.
-    all_systems = ['tusk', 'narwhal-hs', 'batched-hs', 'baseline-hs']
+    all_systems = ['tusk', 'narwhal-hs', 'batched-hs', 'baseline-hs', 'Autobahn']
+    DATA_ROOT = '/home/ccclr0302/autobahn-test/benchmark/data/paper-data'
 
     # Parse the results.
     for system in all_systems:
-        [os.remove(x) for x in glob(f'{system}.*.txt')]
-        files = glob(join(system, '*.txt'))
+        [os.remove(x) for x in glob(join(DATA_ROOT, f'{system}.*.txt'))]
+        files = glob(join(DATA_ROOT, system, '*.txt'))
+        if not files:
+            print(f"[Warning] No input files found for system '{system}' in {join(DATA_ROOT, system)}")
         LogAggregator(system, files, max_latencies).print()
 
     # Plot 'Happy path' graph.
     ploter = Ploter(width=12.8)
     for system in all_systems:
-        ploter.plot_latency(system, [0], [10, 20, 50], [1], 512)
+        ploter.plot_latency(system, [0], [50], [1], 512)
     ploter.finalize(
         'committee-latency',
         legend_cols=4,

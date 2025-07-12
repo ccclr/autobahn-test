@@ -9,8 +9,12 @@ from benchmark.utils import Print
 from benchmark.plot import Ploter, PlotError
 from benchmark.gcp_instance import InstanceManager
 from benchmark.remote import Bench, BenchError
-from paramiko import RSAKey
-
+from fabric.transfer import Transfer
+from paramiko import RSAKey, SSHException
+from invoke.exceptions import UnexpectedExit
+import os
+from invoke import Responder
+import sys
 
 @task
 def local(ctx, debug=True):
@@ -21,7 +25,7 @@ def local(ctx, debug=True):
         'workers': 1,
         'rate': 100000,
         'tx_size': 512,
-        'duration': 20,
+        'duration': 10,
 
         # Unused
         'simulate_partition': True,
@@ -117,44 +121,79 @@ def install(ctx):
     except BenchError as e:
         Print.error(e)
 
+from fabric import task
+
+@task
+def pull(ctx):
+    """Pull latest code from Git repository on a single host."""
+    ctx.run('git config --global --add safe.directory /home/ccclr0302/autobahn || true')
+    with ctx.cd('/home/ccclr0302/autobahn'):
+        ctx.run('git pull origin main || true')
+
+@task
+def pull_all(ctx):
+    """Run git pull on all remote nodes in parallel."""
+    print("[*] Pulling updates on all nodes...")
+
+
+    deployment = Deployment()
+    hosts = deployment._select_hosts(deployment.bench_parameters)
+
+    flat_hosts = []
+    if isinstance(hosts[0], list):
+        for group in hosts:
+            flat_hosts.extend(group)
+    else:
+        flat_hosts = hosts
+
+    for ip in flat_hosts:
+        print(f"[+] Pulling on {ip}...")
+        try:
+            ctx = Connection(ip, user='ccclr0302')
+            pull(ctx)
+        except Exception as e:
+            print(f"[!] Failed on {ip}: {e}", file=sys.stderr)
+
+    print("[✓] Done pulling updates on all nodes.")
+
 
 @task
 def remote(ctx, debug=True):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
-        'nodes': [49],
+        'nodes': [10],
         'workers': 1,
         'co-locate': True,
-        'rate': [100_000],
+        'rate': [10_000, 150_000, 180_000, 190_000, 200_000],
         'tx_size': 512,
-        'duration': 40,
-        'runs': 3,
+        'duration': 60,
+        'runs': 2,
 
         # Unused
-        'simulate_partition': True,
+        'simulate_partition': False,
         'partition_start': 5,
         'partition_duration': 5,
         'partition_nodes': 2,
     }
     node_params = {
-        'timeout_delay': 1500,  # ms
-        'header_size': 64,  # bytes
-        'max_header_delay': 100,  # ms
+        'timeout_delay': 1000,  # ms
+        'header_size': 1000,  # bytes
+        'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
-        'sync_retry_delay': 1500,  # ms
+        'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
-        'max_batch_delay': 100,  # ms
+        'max_batch_delay': 200,  # ms
         'use_optimistic_tips': False,
         'use_parallel_proposals': True,
         'k': 1,
-        'use_fast_path': True,
+        'use_fast_path': False,
         'fast_path_timeout': 200,
         'use_ride_share': False,
         'car_timeout': 2000,
 
-        'simulate_asynchrony': True,
+        'simulate_asynchrony': False,
         'asynchrony_type': [3],
 
         'asynchrony_start': [10_000], #ms
@@ -209,24 +248,43 @@ def logs(ctx):
 @task
 def latency(ctx):
     """
-    Measure SSH latency (ms) between all nodes in nodes.txt
+    Measure SSH latency (ms) between regions.
+    Includes intra-region (i==j) and cross-region (i!=j) latency.
     """
+    import time
+    import numpy as np
+    from fabric import Connection
+    from paramiko import RSAKey, SSHException
+    from invoke.exceptions import UnexpectedExit
     from benchmark.gcp_instance import InstanceManager
+    from benchmark.utils import Print
 
     manager = InstanceManager.make()
     settings = manager.settings
+
+    # 加载 SSH 私钥
     try:
         ctx.connect_kwargs.pkey = RSAKey.from_private_key_file("/home/ccclr0302/.ssh/google_compute_engine")
         connect_kwargs = ctx.connect_kwargs
-    except (IOError, PasswordRequiredException, SSHException) as e:
+    except (IOError, SSHException) as e:
         Print.error(f"Failed to load SSH key: {e}")
         return
 
-    with open("nodes.txt") as f:
-        nodes = [line.strip() for line in f if line.strip()]
-    m = len(nodes)
-    latency_matrix = np.zeros((m, m))
+    # 获取 hosts
+    hosts_dict = manager.hosts()
+    region_nodes = []
 
+    for region, nodes in hosts_dict.items():
+        if len(nodes) >= 2:
+            region_nodes.append((region, nodes[0], nodes[1]))  # (region, node1, node2)
+        else:
+            Print.warn(f"[Skip] Region {region} has <2 nodes.")
+
+    m = len(region_nodes)
+    latency_matrix = np.zeros((m, m))
+    region_names = [r[0] for r in region_nodes]
+
+    # SSH latency 函数
     def ssh_latency(src, dst, repeat=3):
         if src == dst:
             return 0.0
@@ -234,31 +292,41 @@ def latency(ctx):
         for _ in range(repeat):
             try:
                 conn = Connection(host=dst, user=settings.username, connect_kwargs=connect_kwargs)
-
                 conn.run("echo warmup", hide=True, timeout=5)
-                
                 start = time.time()
                 conn.run("echo hello", hide=True, timeout=5)
                 end = time.time()
-                
                 conn.close()
-                results.append((end - start) * 1000)
+                results.append((end - start) * 1000)  # ms
             except Exception as e:
-                print(f"Error SSH {src} → {dst}: {e}")
+                print(f"[Error] SSH {src} → {dst}: {e}")
                 results.append(np.nan)
-        # 只要有一次成功就取成功的平均，否则为nan
         valid = [x for x in results if not np.isnan(x)]
         return np.mean(valid) if valid else np.nan
 
-    for i, src in enumerate(nodes):
-        for j, dst in enumerate(nodes):
-            if i != j:
-                latency_matrix[i][j] = ssh_latency(src, dst)
+    # 1. Intra-region latency
+    for i in range(m):
+        region, node1, node2 = region_nodes[i]
+        latency = ssh_latency(node1, node2)
+        latency_matrix[i][i] = latency / 2 if latency else np.nan
+        print(f"[Intra] {region} ({node1} → {node2}): {latency_matrix[i][i]:.2f} ms")
 
-    print("SSH Latency Matrix (ms):")
+    # 2. Cross-region latency
+    for i in range(m):
+        region_i, node_i, _ = region_nodes[i]
+        for j in range(m):
+            if i == j:
+                continue
+            region_j, node_j, _ = region_nodes[j]
+            latency = ssh_latency(node_i, node_j)
+            latency_matrix[i][j] = latency if latency else np.nan
+            print(f"[Cross] {region_i} → {region_j}: {latency_matrix[i][j]:.2f} ms")
+        print()
+
+    print("\n=== SSH Latency Matrix (ms) ===")
+    print("Regions:", region_names)
     print(latency_matrix)
 
-    # 计算指标
     def average_latency(L):
         vals = [L[i][j] for i in range(m) for j in range(m) if i != j and not np.isnan(L[i][j])]
         return np.mean(vals)
@@ -272,5 +340,5 @@ def latency(ctx):
     mu = average_latency(latency_matrix)
     asym = asymmetry(latency_matrix)
 
-    print(f"\nAverage SSH Latency: {mu:.2f} ms")
+    print(f"\nAverage SSH Latency (Cross-region): {mu:.2f} ms")
     print(f"Asymmetry Degree: {asym:.4f}")

@@ -176,22 +176,32 @@ class LocalCommittee(Committee):
 
 class NodeParameters:
     def __init__(self, json):
-        inputs = []
-        try:
-            inputs += [json['timeout_delay']]
-            inputs += [json['header_size']]
-            inputs += [json['max_header_delay']]
-            inputs += [json['gc_depth']]
-            inputs += [json['sync_retry_delay']]
-            inputs += [json['sync_retry_nodes']]
-            inputs += [json['batch_size']]
-            inputs += [json['max_batch_delay']]
-        except KeyError as e:
-            raise ConfigError(f'Malformed parameters: missing key {e}')
-
-        if not all(isinstance(x, int) for x in inputs):
-            raise ConfigError('Invalid parameters type')
-
+        required_ints = [
+            'timeout_delay', 'header_size', 'max_header_delay', 'gc_depth',
+            'sync_retry_delay', 'sync_retry_nodes', 'batch_size', 'max_batch_delay'
+        ]
+        optional_bools = [
+            'use_optimistic_tips', 'use_parallel_proposals', 'use_fast_path',
+            'use_ride_share', 'simulate_asynchrony', 'use_fast_sync', 'use_exponential_timeouts'
+        ]
+        optional_ints = [
+            'k', 'fast_path_timeout', 'car_timeout', 'egress_penalty'
+        ]
+        optional_lists = [
+            'asynchrony_type', 'asynchrony_start', 'asynchrony_duration', 'affected_nodes'
+        ]
+        for key in required_ints:
+            if key not in json or not isinstance(json[key], int):
+                raise ConfigError(f'Malformed parameters: missing or invalid key {key}')
+        for key in optional_bools:
+            if key in json and not isinstance(json[key], bool):
+                raise ConfigError(f'Invalid type for {key}, should be bool')
+        for key in optional_ints:
+            if key in json and not isinstance(json[key], int):
+                raise ConfigError(f'Invalid type for {key}, should be int')
+        for key in optional_lists:
+            if key in json and not isinstance(json[key], list):
+                raise ConfigError(f'Invalid type for {key}, should be list')
         self.json = json
 
     def print(self, filename):

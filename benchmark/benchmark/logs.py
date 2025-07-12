@@ -5,6 +5,8 @@ from multiprocessing import Pool
 from os.path import join
 from re import findall, search
 from statistics import mean
+import json
+import os
 
 from benchmark.utils import Print
 
@@ -14,7 +16,7 @@ class ParseError(Exception):
 
 
 class LogParser:
-    def __init__(self, clients, primaries, workers, faults=0):
+    def __init__(self, clients, primaries, workers, faults=0, parameters_path='.parameters.json'):
         inputs = [clients, primaries, workers]
         assert all(isinstance(x, list) for x in inputs)
         assert all(isinstance(x, str) for y in inputs for x in y)
@@ -27,6 +29,11 @@ class LogParser:
         else:
             self.committee_size = '?'
             self.workers = '?'
+
+        self.parameters_json = {}
+        if os.path.exists(parameters_path):
+            with open(parameters_path, 'r') as f:
+                self.parameters_json = json.load(f)
 
         # Parse the clients logs.
         try:
@@ -81,16 +88,19 @@ class LogParser:
         if search(r'Error', log) is not None:
             raise ParseError('Client(s) panicked')
 
-        size = int(search(r'Transactions size: (\d+)', log).group(1))
-        rate = int(search(r'Transactions rate: (\d+)', log).group(1))
+        def parse_int(pattern):
+            m = search(pattern, log)
+            return int(m.group(1)) if m else None
+        def parse_time(pattern):
+            m = search(pattern, log)
+            return self._to_posix(m.group(1)) if m else None
 
-        tmp = search(r'\[(.*Z) .* Start ', log).group(1)
-        start = self._to_posix(tmp)
-
+        size = parse_int(r'Transactions size: (\d+)')
+        rate = parse_int(r'Transactions rate: (\d+)')
+        start = parse_time(r'\[(.*Z) .* Start ')
         misses = len(findall(r'rate too high', log))
-
         tmp = findall(r'\[(.*Z) .* sample transaction (\d+)', log)
-        samples = {int(s): self._to_posix(t) for t, s in tmp}
+        samples = {int(s): self._to_posix(t) for t, s in tmp} if tmp else {}
 
         return size, rate, start, misses, samples
 
@@ -106,34 +116,44 @@ class LogParser:
         tmp = [(d, self._to_posix(t)) for t, d in tmp]
         commits = self._merge_results([tmp])
 
+        def parse_int(pattern):
+            m = search(pattern, log)
+            return int(m.group(1)) if m else None
+        def parse_bool(pattern):
+            m = search(pattern, log)
+            return m.group(1) == 'True' if m else None
+        def parse_list(pattern):
+            m = search(pattern, log)
+            return eval(m.group(1)) if m else None
+
         configs = {
-            #'timeout_delay': int(
-            #    search(r'Timeout delay .* (\d+)', log).group(1)
-            #),
-            'header_size': int(
-                search(r'Header size .* (\d+)', log).group(1)
-            ),
-            'max_header_delay': int(
-                search(r'Max header delay .* (\d+)', log).group(1)
-            ),
-            'gc_depth': int(
-                search(r'Garbage collection depth .* (\d+)', log).group(1)
-            ),
-            'sync_retry_delay': int(
-                search(r'Sync retry delay .* (\d+)', log).group(1)
-            ),
-            'sync_retry_nodes': int(
-                search(r'Sync retry nodes .* (\d+)', log).group(1)
-            ),
-            'batch_size': int(
-                search(r'Batch size .* (\d+)', log).group(1)
-            ),
-            'max_batch_delay': int(
-                search(r'Max batch delay .* (\d+)', log).group(1)
-            ),
+            'timeout_delay': parse_int(r'Timeout delay .* (\d+)'),
+            'header_size': parse_int(r'Header size .* (\d+)'),
+            'max_header_delay': parse_int(r'Max header delay .* (\d+)'),
+            'gc_depth': parse_int(r'Garbage collection depth .* (\d+)'),
+            'sync_retry_delay': parse_int(r'Sync retry delay .* (\d+)'),
+            'sync_retry_nodes': parse_int(r'Sync retry nodes .* (\d+)'),
+            'batch_size': parse_int(r'Batch size .* (\d+)'),
+            'max_batch_delay': parse_int(r'Max batch delay .* (\d+)'),
+            'use_optimistic_tips': parse_bool(r'Use optimistic tips: (True|False)'),
+            'use_parallel_proposals': parse_bool(r'Use parallel proposals: (True|False)'),
+            'k': parse_int(r'k: (\d+)'),
+            'use_fast_path': parse_bool(r'Use fast path: (True|False)'),
+            'fast_path_timeout': parse_int(r'Fast path timeout: (\d+)'),
+            'use_ride_share': parse_bool(r'Use ride share: (True|False)'),
+            'car_timeout': parse_int(r'Car timeout: (\d+)'),
+            'simulate_asynchrony': parse_bool(r'Simulate asynchrony: (True|False)'),
+            'asynchrony_type': parse_list(r'Asynchrony type: (\[.*?\])'),
+            'asynchrony_start': parse_list(r'Asynchrony start: (\[.*?\])'),
+            'asynchrony_duration': parse_list(r'Asynchrony duration: (\[.*?\])'),
+            'affected_nodes': parse_list(r'Affected nodes: (\[.*?\])'),
+            'egress_penalty': parse_int(r'Egress penalty: (\d+)'),
+            'use_fast_sync': parse_bool(r'Use fast sync: (True|False)'),
+            'use_exponential_timeouts': parse_bool(r'Use exponential timeouts: (True|False)'),
         }
 
-        ip = search(r'booted on (\d+.\d+.\d+.\d+)', log).group(1)
+        m = search(r'booted on (\d+.\d+.\d+.\d+)', log)
+        ip = m.group(1) if m else None
 
         return proposals, commits, configs, ip
 
@@ -204,19 +224,23 @@ class LogParser:
         return mean(latency) if latency else 0
 
     def result(self):
-        #timeout_delay = self.configs[0]['timeout_delay']
-        header_size = self.configs[0]['header_size']
-        max_header_delay = self.configs[0]['max_header_delay']
-        gc_depth = self.configs[0]['gc_depth']
-        sync_retry_delay = self.configs[0]['sync_retry_delay']
-        sync_retry_nodes = self.configs[0]['sync_retry_nodes']
-        batch_size = self.configs[0]['batch_size']
-        max_batch_delay = self.configs[0]['max_batch_delay']
-
+        # 合并 configs[0] 和 self.parameters_json，优先用 configs[0]
+        cfg = self.parameters_json.copy()
+        for k, v in self.configs[0].items():
+            if v is not None:
+                cfg[k] = v
         consensus_latency = self._consensus_latency() * 1_000
         consensus_tps, consensus_bps, _ = self._consensus_throughput()
         end_to_end_tps, end_to_end_bps, duration = self._end_to_end_throughput()
         end_to_end_latency = self._end_to_end_latency() * 1_000
+        print(cfg)
+        def show(key, unit=""):
+            v = cfg.get(key, None)
+            if v is None:
+                return f'N/A{unit}'
+            if isinstance(v, list):
+                return f'{v}{unit}'
+            return f'{v}{unit}'
 
         return (
             '\n'
@@ -232,14 +256,29 @@ class LogParser:
             f' Transaction size: {self.size[0]:,} B\n'
             f' Execution time: {round(duration):,} s\n'
             '\n'
-            #f' Timeout delay: {timeout_delay:,} ms\n'
-            f' Header size: {header_size:,} B\n'
-            f' Max header delay: {max_header_delay:,} ms\n'
-            f' GC depth: {gc_depth:,} round(s)\n'
-            f' Sync retry delay: {sync_retry_delay:,} ms\n'
-            f' Sync retry nodes: {sync_retry_nodes:,} node(s)\n'
-            f' batch size: {batch_size:,} B\n'
-            f' Max batch delay: {max_batch_delay:,} ms\n'
+            f' Timeout delay: {show("timeout_delay", " ms")}\n'
+            f' Header size: {show("header_size", " B")}\n'
+            f' Max header delay: {show("max_header_delay", " ms")}\n'
+            f' GC depth: {show("gc_depth", " round(s)")}\n'
+            f' Sync retry delay: {show("sync_retry_delay", " ms")}\n'
+            f' Sync retry nodes: {show("sync_retry_nodes", " node(s)")}\n'
+            f' Batch size: {show("batch_size", " B")}\n'
+            f' Max batch delay: {show("max_batch_delay", " ms")}\n'
+            f' Use optimistic tips: {show("use_optimistic_tips")}\n'
+            f' Use parallel proposals: {show("use_parallel_proposals")}\n'
+            f' k: {show("k")}\n'
+            f' Use fast path: {show("use_fast_path")}\n'
+            f' Fast path timeout: {show("fast_path_timeout", " ms")}\n'
+            f' Use ride share: {show("use_ride_share")}\n'
+            f' Car timeout: {show("car_timeout", " ms")}\n'
+            f' Simulate asynchrony: {show("simulate_asynchrony")}\n'
+            f' Asynchrony type: {show("asynchrony_type")}\n'
+            f' Asynchrony start: {show("asynchrony_start")}\n'
+            f' Asynchrony duration: {show("asynchrony_duration")}\n'
+            f' Affected nodes: {show("affected_nodes")}\n'
+            f' Egress penalty: {show("egress_penalty", " ms")}\n'
+            f' Use fast sync: {show("use_fast_sync")}\n'
+            f' Use exponential timeouts: {show("use_exponential_timeouts")}\n'
             '\n'
             ' + RESULTS:\n'
             f' Consensus TPS: {round(consensus_tps):,} tx/s\n'
