@@ -279,7 +279,7 @@ class Bench:
                     rate_share,
                     [x for y in workers_addresses for _, x in y]
                 )
-                print(cmd)
+                # print(cmd)
                 log_file = PathMaker.client_log_file(i, id)
                 self._background_run(host, cmd, log_file)
 
