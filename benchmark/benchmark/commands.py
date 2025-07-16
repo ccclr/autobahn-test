@@ -46,14 +46,36 @@ class CommandMaker:
                 f'--store {store} --parameters {parameters} worker --id {id}')
 
     @staticmethod
-    def run_client(address, size, rate, nodes):
+    def run_client(address, size, rate, nodes, node_id=None, hotspot_config=None):
         assert isinstance(address, str)
         assert isinstance(size, int) and size > 0
         assert isinstance(rate, int) and rate >= 0
         assert isinstance(nodes, list)
         assert all(isinstance(x, str) for x in nodes)
-        nodes = f'--nodes {" ".join(nodes)}' if nodes else ''
-        return f'./benchmark_client {address} --size {size} --rate {rate} {nodes}'
+        
+        # Build base command
+        nodes_str = f'--nodes {" ".join(nodes)}' if nodes else ''
+        cmd = f'./benchmark_client {address} --size {size} --rate {rate} {nodes_str}'
+        
+        cmd += f' --node-id {node_id}'
+        
+        # Add hotspot configuration if provided
+        if hotspot_config and hotspot_config.get('enable_hotspot', False):
+            windows = hotspot_config.get('hotspot_windows', [])
+            hotspot_nodes = hotspot_config.get('hotspot_nodes', [])
+            hotspot_rates = hotspot_config.get('hotspot_rates', [])
+            
+            if windows and hotspot_nodes and hotspot_rates:
+                # Convert windows to string format
+                windows_str = ' '.join([f'{w[0]}:{w[1]}' for w in windows])
+                nodes_str = ' '.join([str(n) for n in hotspot_nodes])
+                rates_str = ' '.join([str(r) for r in hotspot_rates])
+                
+                cmd += f' --hotspot-windows {windows_str}'
+                cmd += f' --hotspot-nodes {nodes_str}'
+                cmd += f' --hotspot-rates {rates_str}'
+        
+        return cmd
 
     @staticmethod
     def kill():

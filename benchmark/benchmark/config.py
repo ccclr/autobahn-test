@@ -190,6 +190,9 @@ class NodeParameters:
         optional_lists = [
             'asynchrony_type', 'asynchrony_start', 'asynchrony_duration', 'affected_nodes'
         ]
+        hotspot_info =[
+            'node_id', 'hotspot-windows', 'hotspot-nodes', 'hotspot-rates'
+        ]
         for key in required_ints:
             if key not in json or not isinstance(json[key], int):
                 raise ConfigError(f'Malformed parameters: missing or invalid key {key}')
@@ -200,6 +203,9 @@ class NodeParameters:
             if key in json and not isinstance(json[key], int):
                 raise ConfigError(f'Invalid type for {key}, should be int')
         for key in optional_lists:
+            if key in json and not isinstance(json[key], list):
+                raise ConfigError(f'Invalid type for {key}, should be list')
+        for key in hotspot_info:
             if key in json and not isinstance(json[key], list):
                 raise ConfigError(f'Invalid type for {key}, should be list')
         self.json = json
@@ -213,6 +219,7 @@ class NodeParameters:
 class BenchParameters:
     def __init__(self, json):
         try:
+            print(json)
             self.faults = int(json['faults'])
 
             nodes = json['nodes']
@@ -244,6 +251,47 @@ class BenchParameters:
             self.partition_nodes = int(json['partition_nodes'])
             self.partition_start = int(json['partition_start'])
             self.partition_duration = int(json['partition_duration'])
+            
+            # New hotspot parameters
+            self.enable_hotspot = bool(json.get('enable_hotspot'))
+            
+            if self.enable_hotspot:
+                # Hotspot time windows in format [[start1, end1], [start2, end2], ...]
+                self.hotspot_windows = json.get('hotspot_windows')
+                if not isinstance(self.hotspot_windows, list):
+                    raise ConfigError('hotspot_windows must be a list of [start, end] pairs')
+                
+                # Validate window format
+                for window in self.hotspot_windows:
+                    if not isinstance(window, list) or len(window) != 2:
+                        raise ConfigError('Each hotspot window must be [start, end] pair')
+                    if not all(isinstance(x, int) and x >= 0 for x in window):
+                        raise ConfigError('Hotspot window times must be non-negative integers')
+                    if window[0] >= window[1]:
+                        raise ConfigError('Hotspot window start must be less than end')
+                
+                # Number of hotspot nodes for each window
+                self.hotspot_nodes = json.get('hotspot_nodes')
+                if not isinstance(self.hotspot_nodes, list):
+                    raise ConfigError('hotspot_nodes must be a list')
+                if len(self.hotspot_nodes) != len(self.hotspot_windows):
+                    raise ConfigError('hotspot_nodes length must match hotspot_windows length')
+                if not all(isinstance(x, int) and x > 0 for x in self.hotspot_nodes):
+                    raise ConfigError('hotspot_nodes must be positive integers')
+                
+                # Rate multipliers for each window
+                self.hotspot_rates = json.get('hotspot_rates')
+                if not isinstance(self.hotspot_rates, list):
+                    raise ConfigError('hotspot_rates must be a list')
+                if len(self.hotspot_rates) != len(self.hotspot_windows):
+                    raise ConfigError('hotspot_rates length must match hotspot_windows length')
+                if not all(isinstance(x, (int, float)) and x >= 0 for x in self.hotspot_rates):
+                    raise ConfigError('hotspot_rates must be non-negative numbers')
+            else:
+                self.hotspot_windows = []
+                self.hotspot_nodes = []
+                self.hotspot_rates = []
+            
         except KeyError as e:
             raise ConfigError(f'Malformed bench parameters: missing key {e}')
 
@@ -252,6 +300,14 @@ class BenchParameters:
 
         if min(self.nodes) <= self.faults:
             raise ConfigError('There should be more nodes than faults')
+
+        # Validate hotspot parameters against total nodes
+        if self.enable_hotspot:
+            max_hotspot_nodes = max(self.hotspot_nodes) if self.hotspot_nodes else 0
+            total_client_nodes = sum(self.nodes)  # Total number of client nodes
+            if max_hotspot_nodes > total_client_nodes:
+                raise ConfigError(f'Maximum hotspot nodes ({max_hotspot_nodes}) exceeds total client nodes ({total_client_nodes})')
+            
 
 
 class PlotParameters:

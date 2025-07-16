@@ -41,7 +41,7 @@ class LogParser:
                 results = p.map(self._parse_clients, clients)
         except (ValueError, IndexError, AttributeError) as e:
             raise ParseError(f'Failed to parse clients\' logs: {e}')
-        self.size, self.rate, self.start, misses, self.sent_samples \
+        self.size, self.rate, self.start, misses, self.sent_samples, self.hotspot_info \
             = zip(*results)
         self.misses = sum(misses)
 
@@ -75,15 +75,6 @@ class LogParser:
                 f'Clients missed their target rate {self.misses:,} time(s)'
             )
 
-    def _merge_results(self, input):
-        # Keep the earliest timestamp.
-        merged = {}
-        for x in input:
-            for k, v in x:
-                if not k in merged or merged[k] > v:
-                    merged[k] = v
-        return merged
-
     def _parse_clients(self, log):
         if search(r'Error', log) is not None:
             raise ParseError('Client(s) panicked')
@@ -102,7 +93,50 @@ class LogParser:
         tmp = findall(r'\[(.*Z) .* sample transaction (\d+)', log)
         samples = {int(s): self._to_posix(t) for t, s in tmp} if tmp else {}
 
-        return size, rate, start, misses, samples
+        # Parse hotspot information
+        hotspot_info = {}
+        node_id = parse_int(r'Node ID: (\d+)')
+        if node_id is not None:
+            hotspot_info['node_id'] = node_id
+        
+        total_nodes = parse_int(r'Total nodes: (\d+)')
+        if total_nodes is not None:
+            hotspot_info['total_nodes'] = total_nodes
+        
+        # Parse hotspot configuration if present
+        hotspot_config_match = search(r'Hotspot configuration enabled:', log)
+        if hotspot_config_match:
+            hotspot_info['enabled'] = True
+            # Extract hotspot windows information
+            windows_matches = findall(r'Window \d+: (\d+)s-(\d+)s, (\d+) hotspot nodes, ([\d.]+)% rate increase', log)
+            if windows_matches:
+                windows = []
+                for start_s, end_s, nodes, rate_pct in windows_matches:
+                    windows.append({
+                        'start': int(start_s),
+                        'end': int(end_s),
+                        'nodes': int(nodes),
+                        'rate_increase': float(rate_pct) / 100.0
+                    })
+                hotspot_info['windows'] = windows
+        else:
+            hotspot_info['enabled'] = False
+
+        # Parse dynamic rate information
+        rate_changes = findall(r'Current transaction rate: ([\d.]+) tx/s at time (\d+)s', log)
+        if rate_changes:
+            hotspot_info['rate_changes'] = [(float(rate), int(time)) for rate, time in rate_changes]
+
+        return size, rate, start, misses, samples, hotspot_info
+
+    def _merge_results(self, input):
+        # Keep the earliest timestamp.
+        merged = {}
+        for x in input:
+            for k, v in x:
+                if not k in merged or merged[k] > v:
+                    merged[k] = v
+        return merged
 
     def _parse_primaries(self, log):
         if search(r'(?:panicked|Error)', log) is not None:
@@ -223,17 +257,56 @@ class LogParser:
                 f.write(str(line[0]) + ',' + str(line[1]) + ',' + str((line[2])) + '\n')
         return mean(latency) if latency else 0
 
+    def _analyze_hotspot_performance(self):
+        """Analyze hotspot performance metrics"""
+        hotspot_analysis = {}
+        
+        # Check if hotspot was enabled
+        hotspot_enabled = any(info.get('enabled', False) for info in self.hotspot_info)
+        hotspot_analysis['enabled'] = hotspot_enabled
+        
+        if hotspot_enabled:
+            # Analyze rate changes per node
+            node_performances = {}
+            for i, info in enumerate(self.hotspot_info):
+                if 'rate_changes' in info:
+                    node_id = info.get('node_id', i)
+                    node_performances[node_id] = {
+                        'rate_changes': info['rate_changes'],
+                        'base_rate': self.rate[i] if i < len(self.rate) else 0
+                    }
+            
+            hotspot_analysis['node_performances'] = node_performances
+            
+            # Extract hotspot windows configuration
+            if self.hotspot_info and 'windows' in self.hotspot_info[0]:
+                hotspot_analysis['windows'] = self.hotspot_info[0]['windows']
+        
+        return hotspot_analysis
+
     def result(self):
         # 合并 configs[0] 和 self.parameters_json，优先用 configs[0]
         cfg = self.parameters_json.copy()
         for k, v in self.configs[0].items():
             if v is not None:
                 cfg[k] = v
-        consensus_latency = self._consensus_latency() * 1_000
+        
+        consensus_latency = (self._consensus_latency() or 0) * 1_000
         consensus_tps, consensus_bps, _ = self._consensus_throughput()
+        consensus_tps = consensus_tps or 0
+        consensus_bps = consensus_bps or 0
+
         end_to_end_tps, end_to_end_bps, duration = self._end_to_end_throughput()
-        end_to_end_latency = self._end_to_end_latency() * 1_000
-        print(cfg)
+        end_to_end_tps = end_to_end_tps or 0
+        end_to_end_bps = end_to_end_bps or 0
+        duration = duration or 0
+
+        end_to_end_latency = (self._end_to_end_latency() or 0) * 1_000
+
+        
+        # Analyze hotspot performance
+        hotspot_analysis = self._analyze_hotspot_performance()
+        
         def show(key, unit=""):
             v = cfg.get(key, None)
             if v is None:
@@ -241,6 +314,19 @@ class LogParser:
             if isinstance(v, list):
                 return f'{v}{unit}'
             return f'{v}{unit}'
+
+        # Build hotspot summary
+        hotspot_summary = ""
+        print(hotspot_analysis)
+        if hotspot_analysis['enabled']:
+            hotspot_summary += f' Enable hotspot: {hotspot_analysis["enabled"]}\n'
+            if 'windows' in hotspot_analysis:                
+                # Show per-window analysis
+                for i, window in enumerate(hotspot_analysis['windows']):
+                    hotspot_summary += f' Window {i+1}: {window["start"]}s-{window["end"]}s, '
+                    hotspot_summary += f'{window["nodes"]} nodes, {window["rate_increase"]*100:.1f}% increase\n'
+        else:
+            hotspot_summary += f' Enable hotspot: False\n'
 
         return (
             '\n'
@@ -252,7 +338,7 @@ class LogParser:
             f' Committee size: {self.committee_size} node(s)\n'
             f' Worker(s) per node: {self.workers} worker(s)\n'
             f' Collocate primary and workers: {self.collocate}\n'
-            f' Input rate: {sum(self.rate):,} tx/s\n'
+            f' Input rate: {", ".join(str(r) for r in self.rate if r is not None)} tx/s\n'
             f' Transaction size: {self.size[0]:,} B\n'
             f' Execution time: {round(duration):,} s\n'
             '\n'
@@ -280,6 +366,9 @@ class LogParser:
             f' Use fast sync: {show("use_fast_sync")}\n'
             f' Use exponential timeouts: {show("use_exponential_timeouts")}\n'
             '\n'
+            ' + HOTSPOT CONFIG:\n'
+            f'{hotspot_summary}'
+            '\n'
             ' + RESULTS:\n'
             f' Consensus TPS: {round(consensus_tps):,} tx/s\n'
             f' Consensus BPS: {round(consensus_bps):,} B/s\n'
@@ -290,12 +379,7 @@ class LogParser:
             f' End-to-end latency: {round(end_to_end_latency):,} ms\n'
             '-----------------------------------------\n'
         )
-
-    def print(self, filename):
-        assert isinstance(filename, str)
-        with open(filename, 'a') as f:
-            f.write(self.result())
-
+    
     @classmethod
     def process(cls, directory, faults=0):
         assert isinstance(directory, str)

@@ -79,16 +79,30 @@ class LocalBench:
 
             self.node_parameters.print(PathMaker.parameters_file())
 
-            # Run the clients (they will wait for the nodes to be ready).
+           # Run the clients (they will wait for the nodes to be ready).
             workers_addresses = committee.workers_addresses(self.faults)
             rate_share = ceil(rate / committee.workers())
+            all_worker_nodes = [x for y in workers_addresses for _, x in y]
+
+            hotspot_config = None
+            if getattr(self, 'enable_hotspot', False):
+                hotspot_config = {
+                    'enable_hotspot': True,
+                    'hotspot_windows': getattr(self, 'hotspot_windows', []),
+                    'hotspot_nodes': getattr(self, 'hotspot_nodes', []),
+                    'hotspot_rates': getattr(self, 'hotspot_rates', []),
+                }
+                print(hotspot_config)
+
             for i, addresses in enumerate(workers_addresses):
                 for (id, address) in addresses:
                     cmd = CommandMaker.run_client(
                         address,
                         self.tx_size,
                         rate_share,
-                        [x for y in workers_addresses for _, x in y]
+                        all_worker_nodes,
+                        node_id=i,
+                        hotspot_config=hotspot_config
                     )
                     log_file = PathMaker.client_log_file(i, id)
                     self._background_run(cmd, log_file)

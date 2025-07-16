@@ -28,10 +28,15 @@ def local(ctx, debug=True):
         'duration': 10,
 
         # Unused
-        'simulate_partition': True,
+        'simulate_partition': False,
         'partition_start': 5,
         'partition_duration': 5,
         'partition_nodes': 1,
+        
+        'enable_hotspot': False,
+        'hotspot_windows':[[5, 10]],
+        'hotspot_nodes': [2],
+        'hotspot_rates': [0.2],
     }
     node_params = {
         'timeout_delay': 1_000,  # ms
@@ -50,7 +55,7 @@ def local(ctx, debug=True):
         'use_ride_share': False,
         'car_timeout': 2000,
 
-        'simulate_asynchrony': True,
+        'simulate_asynchrony': False,
         'asynchrony_type': [3],
 
         'asynchrony_start': [10_000], #ms
@@ -129,7 +134,7 @@ def remote(ctx, debug=True):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
-        'nodes': [10],
+        'nodes': [4],
         'workers': 1,
         'co-locate': True,
         # 'rate': [100_000, 150_000, 180_000, 200_000],

@@ -169,12 +169,12 @@ impl Committer {
                                 }
                             }
 
-                            if state.last_executed_slot % 10 ==0{
-                                let snapshot = self.synchronizer
-                                    .collect_dag_snapshot_from_proposals(slot, *view, proposals.values().cloned().collect(), last_stop_heights)
-                                    .await;
-                                Synchronizer::export_snapshot_to_file(&snapshot);
-                            }
+                            // if state.last_executed_slot % 10 ==0{
+                            //     let snapshot = self.synchronizer
+                            //         .collect_dag_snapshot_from_proposals(slot, *view, proposals.values().cloned().collect(), last_stop_heights)
+                            //         .await;
+                            //     Synchronizer::export_snapshot_to_file(&snapshot);
+                            // }
 
 
                             state.last_executed_slot += 1;
