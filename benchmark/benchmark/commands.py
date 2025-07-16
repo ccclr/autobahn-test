@@ -60,7 +60,7 @@ class CommandMaker:
         cmd += f' --node-id {node_id}'
         
         # Add hotspot configuration if provided
-        if hotspot_config and hotspot_config.get('enable_hotspot', False):
+        if hotspot_config and hotspot_config.get('enable_hotspot'):
             windows = hotspot_config.get('hotspot_windows', [])
             hotspot_nodes = hotspot_config.get('hotspot_nodes', [])
             hotspot_rates = hotspot_config.get('hotspot_rates', [])

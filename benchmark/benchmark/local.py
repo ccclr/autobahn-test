@@ -92,7 +92,7 @@ class LocalBench:
                     'hotspot_nodes': getattr(self, 'hotspot_nodes', []),
                     'hotspot_rates': getattr(self, 'hotspot_rates', []),
                 }
-                print(hotspot_config)
+            # print(hotspot_config)
 
             for i, addresses in enumerate(workers_addresses):
                 for (id, address) in addresses:

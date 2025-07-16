@@ -96,8 +96,6 @@ class Bench:
             f'ln -sf {self.settings.repo_name}/target/release/benchmark_client ~/benchmark_client',
         ]
 
-
-
         hosts = all_nodes
         print(hosts)
         try:
@@ -293,18 +291,44 @@ class Bench:
         Print.info('Booting clients...')
         workers_addresses = committee.workers_addresses(faults)
         rate_share = ceil(rate / committee.workers())
+        all_worker_nodes = [x for y in workers_addresses for _, x in y]
+        
+        hotspot_config = None
+        if getattr(self, 'enable_hotspot', False):
+            hotspot_config = {
+                'enable_hotspot': True,
+                'hotspot_windows': getattr(self, 'hotspot_windows', []),
+                'hotspot_nodes': getattr(self, 'hotspot_nodes', []),
+                'hotspot_rates': getattr(self, 'hotspot_rates', []),
+            }
+        print(hotspot_config)
+        
+        # for i, addresses in enumerate(workers_addresses):
+        #     for (id, address) in addresses:
+        #         host = Committee.ip(address)
+        #         cmd = CommandMaker.run_client(
+        #             address,
+        #             bench_parameters.tx_size,
+        #             rate_share,
+        #             [x for y in workers_addresses for _, x in y]
+        #         )
+        #         # print(cmd)
+        #         log_file = PathMaker.client_log_file(i, id)
+        #         self._background_run(host, cmd, log_file)
+        
         for i, addresses in enumerate(workers_addresses):
-            for (id, address) in addresses:
-                host = Committee.ip(address)
-                cmd = CommandMaker.run_client(
-                    address,
-                    bench_parameters.tx_size,
-                    rate_share,
-                    [x for y in workers_addresses for _, x in y]
-                )
-                # print(cmd)
-                log_file = PathMaker.client_log_file(i, id)
-                self._background_run(host, cmd, log_file)
+                for (id, address) in addresses:
+                    host = Committee.ip(address)
+                    cmd = CommandMaker.run_client(
+                        address,
+                        bench_parameters.tx_size,
+                        rate_share,
+                        all_worker_nodes,
+                        node_id=i,
+                        hotspot_config=hotspot_config
+                    )
+                    log_file = PathMaker.client_log_file(i, id)
+                    self._background_run(host, cmd, log_file)
 
         # Run the primaries (except the faulty ones).
         Print.info('Booting primaries...')
@@ -500,14 +524,17 @@ class Bench:
 
                         faults = bench_parameters.faults
                         logger = self._logs(committee_copy, faults)
-                        logger.print(PathMaker.result_file(
+                        
+                        result_file = PathMaker.result_file(
                             faults,
                             n, 
                             bench_parameters.workers,
                             bench_parameters.collocate,
                             r, 
                             bench_parameters.tx_size, 
-                        ))
+                        )
+                        with open(result_file, 'w') as f:
+                            f.write(logger.result())
                     except (subprocess.SubprocessError, GroupException, ParseError) as e:
                         self.kill(hosts=selected_hosts)
                         if isinstance(e, GroupException):

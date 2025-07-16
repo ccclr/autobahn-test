@@ -140,7 +140,7 @@ def remote(ctx, debug=True):
         # 'rate': [100_000, 150_000, 180_000, 200_000],
         'rate': [190_000],
         'tx_size': 512,
-        'duration': 60,
+        'duration': 10,
         'runs': 2,
 
         # Unused
@@ -148,6 +148,11 @@ def remote(ctx, debug=True):
         'partition_start': 5,
         'partition_duration': 5,
         'partition_nodes': 2,
+        
+        'enable_hotspot': True,
+        'hotspot_windows':[[5, 10]],
+        'hotspot_nodes': [2],
+        'hotspot_rates': [0.2],
     }
     node_params = {
         'timeout_delay': 1500,  # ms
