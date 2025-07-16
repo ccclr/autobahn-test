@@ -52,6 +52,22 @@ class Bench:
                 raise ExecutionError(output.stderr)
 
     def install(self):
+        EXCLUDED_ZONES = ['us-central1-c'] 
+        manager = InstanceManager.make()
+        settings = manager.settings
+        hosts_dict = manager.hosts()
+
+        filtered_hosts = {
+            region: nodes for region, nodes in hosts_dict.items()
+            if region.lower() not in EXCLUDED_ZONES
+        }
+
+        all_nodes = [ip for nodes in filtered_hosts.values() for ip in nodes]
+        # Print(all_nodes)
+
+        if not all_nodes:
+            print("No hosts remaining after filtering.")
+            return
         Print.info('Installing rust and cloning the repo...')
         cmd = [
             'sudo apt-get update',
@@ -82,7 +98,7 @@ class Bench:
 
 
 
-        hosts = self.manager.hosts(flat=True)
+        hosts = all_nodes
         print(hosts)
         try:
             g = Group(*hosts, user=self.settings.username, connect_kwargs=self.connect)
@@ -108,15 +124,22 @@ class Bench:
         # Collocate the primary and its workers on the same machine.
         if bench_parameters.collocate:
             nodes = max(bench_parameters.nodes)
+            EXCLUDED_ZONES = ['us-central1-c']
 
-            # Ensure there are enough hosts.
-            hosts = self.manager.hosts()
-            if sum(len(x) for x in hosts.values()) < nodes:
+            hosts_dict = self.manager.hosts()
+
+            filtered_hosts = {
+                region: nodes for region, nodes in hosts_dict.items()
+                if region.lower() not in EXCLUDED_ZONES
+            }
+
+            all_nodes = [ip for nodes in filtered_hosts.values() for ip in nodes]
+
+            if len(all_nodes) < nodes:
+                Print.warn(f"Not enough hosts after excluding zones: {len(all_nodes)} < {nodes}")
                 return []
-
-            # Select the hosts in different data centers.
-            ordered = [x for y in hosts.values() for x in y]
-            assert len(ordered) >= nodes, f"Not enough hosts: got {len(ordered)}, need {nodes}"
+            
+            ordered = all_nodes
             return ordered[:nodes]
 
         # Spawn the primary and each worker on a different machine. Each

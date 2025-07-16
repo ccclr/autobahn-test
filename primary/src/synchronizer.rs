@@ -476,8 +476,6 @@ impl Synchronizer {
     
         for proposal in proposals {
             let digest = proposal.header_digest.clone();
-            // proposal 的 author
-            // 由于 Proposal 结构体没有 author 字段，需要通过 header 获取
             let header = match self.get_header(digest.clone()).await.expect("storage read failure") {
                 Some(h) => h,
                 None => {
@@ -490,6 +488,7 @@ impl Synchronizer {
             let headers = self.get_all_headers_for_proposal(proposal.clone(), 0)
                 .await
                 .expect("should have ancestors by now");
+
             for header in headers {
                 let digest_str = header.digest().to_string();
                 let author = header.author;

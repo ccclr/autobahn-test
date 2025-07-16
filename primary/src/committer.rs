@@ -169,7 +169,7 @@ impl Committer {
                                 }
                             }
 
-                            if state.last_executed_slot % 20 ==0{
+                            if state.last_executed_slot % 10 ==0{
                                 let snapshot = self.synchronizer
                                     .collect_dag_snapshot_from_proposals(slot, *view, proposals.values().cloned().collect(), last_stop_heights)
                                     .await;

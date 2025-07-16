@@ -123,39 +123,6 @@ def install(ctx):
 
 from fabric import task
 
-@task
-def pull(ctx):
-    """Pull latest code from Git repository on a single host."""
-    ctx.run('git config --global --add safe.directory /home/ccclr0302/autobahn || true')
-    with ctx.cd('/home/ccclr0302/autobahn'):
-        ctx.run('git pull origin main || true')
-
-@task
-def pull_all(ctx):
-    """Run git pull on all remote nodes in parallel."""
-    print("[*] Pulling updates on all nodes...")
-
-
-    deployment = Deployment()
-    hosts = deployment._select_hosts(deployment.bench_parameters)
-
-    flat_hosts = []
-    if isinstance(hosts[0], list):
-        for group in hosts:
-            flat_hosts.extend(group)
-    else:
-        flat_hosts = hosts
-
-    for ip in flat_hosts:
-        print(f"[+] Pulling on {ip}...")
-        try:
-            ctx = Connection(ip, user='ccclr0302')
-            pull(ctx)
-        except Exception as e:
-            print(f"[!] Failed on {ip}: {e}", file=sys.stderr)
-
-    print("[✓] Done pulling updates on all nodes.")
-
 
 @task
 def remote(ctx, debug=True):
@@ -165,7 +132,8 @@ def remote(ctx, debug=True):
         'nodes': [10],
         'workers': 1,
         'co-locate': True,
-        'rate': [10_000, 150_000, 180_000, 190_000, 200_000],
+        # 'rate': [100_000, 150_000, 180_000, 200_000],
+        'rate': [190_000],
         'tx_size': 512,
         'duration': 60,
         'runs': 2,
@@ -177,7 +145,7 @@ def remote(ctx, debug=True):
         'partition_nodes': 2,
     }
     node_params = {
-        'timeout_delay': 1000,  # ms
+        'timeout_delay': 1500,  # ms
         'header_size': 1000,  # bytes
         'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
@@ -185,11 +153,11 @@ def remote(ctx, debug=True):
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
         'max_batch_delay': 200,  # ms
-        'use_optimistic_tips': False,
+        'use_optimistic_tips': True,
         'use_parallel_proposals': True,
         'k': 1,
-        'use_fast_path': False,
-        'fast_path_timeout': 200,
+        'use_fast_path': True,
+        'fast_path_timeout': 100,
         'use_ride_share': False,
         'car_timeout': 2000,
 
