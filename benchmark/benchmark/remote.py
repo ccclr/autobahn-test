@@ -294,12 +294,12 @@ class Bench:
         all_worker_nodes = [x for y in workers_addresses for _, x in y]
         
         hotspot_config = None
-        if getattr(self, 'enable_hotspot', False):
+        if getattr(bench_parameters, 'enable_hotspot', False):
             hotspot_config = {
                 'enable_hotspot': True,
-                'hotspot_windows': getattr(self, 'hotspot_windows', []),
-                'hotspot_nodes': getattr(self, 'hotspot_nodes', []),
-                'hotspot_rates': getattr(self, 'hotspot_rates', []),
+                'hotspot_windows': getattr(bench_parameters, 'hotspot_windows', []),
+                'hotspot_nodes': getattr(bench_parameters, 'hotspot_nodes', []),
+                'hotspot_rates': getattr(bench_parameters, 'hotspot_rates', []),
             }
         print(hotspot_config)
         
@@ -533,7 +533,7 @@ class Bench:
                             r, 
                             bench_parameters.tx_size, 
                         )
-                        with open(result_file, 'w') as f:
+                        with open(result_file, 'a') as f:
                             f.write(logger.result())
                     except (subprocess.SubprocessError, GroupException, ParseError) as e:
                         self.kill(hosts=selected_hosts)
