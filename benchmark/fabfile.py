@@ -36,7 +36,7 @@ def local(ctx, debug=True):
         'enable_hotspot': True,
         'hotspot_windows':[[5, 10]],
         'hotspot_nodes': [2],
-        'hotspot_rates': [0.2],
+        'hotspot_rates': [0.4],
     }
     node_params = {
         'timeout_delay': 1_000,  # ms
