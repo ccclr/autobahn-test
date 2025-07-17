@@ -209,6 +209,7 @@ impl Primary {
             parameters.fast_path_timeout,
             parameters.use_ride_share,
             parameters.car_timeout,
+            parameters.cut_condition_type,
             // parameters.simulate_asynchrony,
             // parameters.asynchrony_start,
             // parameters.asynchrony_duration,

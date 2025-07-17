@@ -11,6 +11,7 @@ use rand::Rng;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tokio::time::{interval, sleep, Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 #[tokio::main]
@@ -164,19 +165,74 @@ pub struct HotspotConfig {
 }
 
 impl HotspotConfig {
-    /// 计算指定时间和节点的到达率
-    pub fn get_arrival_rate(&self, elapsed_secs: u64, base_rate: f64, node_idx: usize) -> f64 {
+    /// 计算指定时间和节点的到达率，保持总体速率恒定
+    pub fn get_arrival_rate(&self, elapsed_secs: u64, base_rate: f64, node_idx: usize, total_nodes: usize) -> f64 {
+        // 检查是否在任何热点窗口内
         for ((start_end, &num_hotspot), &rate_increase) in self.hotspot_windows.iter()
             .zip(&self.hotspot_nodes)
             .zip(&self.hotspot_rates) {
             let (start, end) = *start_end;
+            
+            // 检查当前时间是否在窗口内
             if elapsed_secs >= start && elapsed_secs <= end {
-                if node_idx < num_hotspot {
-                    return base_rate * (1.0 + rate_increase);
-                }
+                // 在热点窗口内，需要重新分配速率
+                return self.calculate_redistributed_rate(
+                    base_rate, 
+                    node_idx, 
+                    total_nodes, 
+                    num_hotspot, 
+                    rate_increase
+                );
             }
         }
+        
+        // 窗口外，所有节点均匀分配
         base_rate
+    }
+    
+    /// 计算重分配后的速率，保持总体恒定
+    fn calculate_redistributed_rate(&self, base_rate: f64, node_idx: usize, total_nodes: usize, num_hotspot: usize, rate_increase: f64) -> f64 {
+        if num_hotspot >= total_nodes {
+            // 如果热点节点数量 >= 总节点数，所有节点都是热点
+            return base_rate;
+        }
+        
+        let non_hotspot_nodes = total_nodes - num_hotspot;
+        
+        if node_idx < num_hotspot {
+            // 热点节点：获得额外的速率
+            // 计算公式：保证总速率 = total_nodes * base_rate
+            // hotspot_rate * num_hotspot + normal_rate * non_hotspot_nodes = total_nodes * base_rate
+            // hotspot_rate = base_rate * (1 + rate_increase)
+            // 解出 normal_rate，然后返回 hotspot_rate
+            
+            let total_target_rate = total_nodes as f64 * base_rate;
+            let hotspot_rate = base_rate * (1.0 + rate_increase);
+            let remaining_rate = total_target_rate - (num_hotspot as f64 * hotspot_rate);
+            
+            // 确保剩余速率为正
+            if remaining_rate < 0.0 {
+                // 如果增长过大，限制热点节点速率
+                return total_target_rate / num_hotspot as f64;
+            }
+            
+            hotspot_rate
+        } else {
+            // 非热点节点：速率减少以补偿热点节点的增加
+            let total_target_rate = total_nodes as f64 * base_rate;
+            let hotspot_rate = base_rate * (1.0 + rate_increase);
+            let total_hotspot_rate = num_hotspot as f64 * hotspot_rate;
+            let remaining_rate = total_target_rate - total_hotspot_rate;
+            
+            if non_hotspot_nodes == 0 {
+                return 0.0;
+            }
+            
+            let normal_rate = remaining_rate / non_hotspot_nodes as f64;
+            
+            // 确保速率不为负
+            normal_rate.max(0.0)
+        }
     }
 }
 
@@ -194,10 +250,11 @@ impl Client {
         const PRECISION: u64 = 20; // Sample precision.
         const BURST_DURATION: u64 = 1000 / PRECISION;
 
-        // The transaction size must be at least 9 bytes to ensure all txs are different.
-        if self.size < 9 {
+        // The transaction size must be at least 17 bytes to ensure all txs are different.
+        // 1 byte (flag) + 8 bytes (counter) + 8 bytes (timestamp) = 17 bytes minimum
+        if self.size < 17 {
             return Err(anyhow::Error::msg(
-                "Transaction size must be at least 9 bytes",
+                "Transaction size must be at least 17 bytes to include timestamp",
             ));
         }
 
@@ -208,7 +265,6 @@ impl Client {
 
         let mut tx = BytesMut::with_capacity(self.size);
         let mut counter = 0;
-        let mut r = rand::thread_rng().gen::<u64>();
         let mut transport = Framed::new(stream, LengthDelimitedCodec::new());
         
         let start_time = Instant::now();
@@ -223,9 +279,8 @@ impl Client {
             let now = Instant::now();
             let elapsed_secs = start_time.elapsed().as_secs();
             
-            // 计算当前时间的发送速率
             let current_rate = if let Some(ref config) = self.hotspot_config {
-                config.get_arrival_rate(elapsed_secs, self.rate as f64, self.node_id)
+                config.get_arrival_rate(elapsed_secs, self.rate as f64, self.node_id, self.nodes.len())
             } else {
                 self.rate as f64
             };
@@ -233,23 +288,28 @@ impl Client {
             // 计算当前突发周期内应该发送的事务数量
             let burst = (current_rate / PRECISION as f64).round() as u64;
             
-            // 每秒记录一次当前速率（用于性能分析）
-            if counter % (current_rate as u64).max(1) == 0 {
-                info!("Current transaction rate: {:.2} tx/s at time {}s", current_rate, elapsed_secs);
-            }
+            info!("Current transaction rate: {:.2} tx/s at time {}s", current_rate, elapsed_secs);
+            // // 每秒记录一次当前速率（用于性能分析）
+            // if counter % (current_rate as u64).max(1) == 0 {
+                
+            // }
 
             // 在当前突发周期内发送事务
-            for x in 0..burst {
-                if counter % 100 == 0 {
-                    // NOTE: This log entry is used to compute performance.
-                    info!("Sending sample transaction {}", counter);
-                    tx.put_u8(0u8); // Sample txs start with 0.
-                    tx.put_u64(counter); // This counter identifies the tx.
-                } else {
-                    r += 1;
-                    tx.put_u8(1u8); // Standard txs start with 1.
-                    tx.put_u64(r); // Ensures all clients send different txs.
-                }
+            for _x in 0..burst {
+                // 获取当前系统时间戳（微秒）
+                let timestamp_us = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_micros() as u64;
+
+                info!("Sending sample transaction {} with timestamp {}", counter, timestamp_us);
+                
+                tx.put_u8(0u8); // Sample txs start with 0.
+                tx.put_u64(counter); // This counter identifies the tx.
+                tx.put_u64(timestamp_us); // Add timestamp for latency measurement
+                
+                // Include node_id to help with aggregated throughput calculation
+                tx.put_u32(self.node_id as u32);
 
                 tx.resize(self.size, 0u8); // Truncate any bits past size
                 let bytes = tx.split().freeze(); // split() moves byte content from tx to bytes
@@ -259,6 +319,8 @@ impl Client {
                     warn!("Failed to send transaction: {}", e);
                     break 'main;
                 }
+                
+                counter += 1; 
             }
             
             // 检查是否发送时间过长
@@ -266,8 +328,6 @@ impl Client {
                 // NOTE: This log entry is used to compute performance.
                 warn!("Transaction rate too high for this client");
             }
-            
-            counter += 1;
         }
         Ok(())
     }
