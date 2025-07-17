@@ -419,9 +419,9 @@ class LogParser:
             if 'node_performances' in hotspot_analysis:
                 hotspot_summary += 'Node performances:\n'
                 for node_id, perf in hotspot_analysis['node_performances'].items():
-                    hotspot_summary += f'Node {node_id}: base={perf["base_rate"]}, '
-                    hotspot_summary += f'actual={perf["avg_actual_rate"]:.1f}'
-                    hotspot_summary += f'txs={perf.get("transactions_sent", "N/A")}\n'
+                    hotspot_summary += f' Node {node_id}: base={perf["base_rate"]}, '
+                    hotspot_summary += f' actual={perf["avg_actual_rate"]:.1f}, '
+                    hotspot_summary += f' txs={perf.get("transactions_sent", "N/A")}\n'
         else:
             hotspot_summary += f' Enable hotspot: False\n'
         
