@@ -200,6 +200,7 @@ class LogParser:
             'egress_penalty': parse_int(r'Egress penalty: (\d+)'),
             'use_fast_sync': parse_bool(r'Use fast sync: (True|False)'),
             'use_exponential_timeouts': parse_bool(r'Use exponential timeouts: (True|False)'),
+            'cut_condition_type': parse_int(r'Cut condition type: (\[.*?\])'),
         }
 
         m = search(r'booted on (\d+.\d+.\d+.\d+)', log)
@@ -462,6 +463,7 @@ class LogParser:
             f' Egress penalty: {show("egress_penalty", " ms")}\n'
             f' Use fast sync: {show("use_fast_sync")}\n'
             f' Use exponential timeouts: {show("use_exponential_timeouts")}\n'
+            f' Cut Condition: {show("cut_condition_type")}\n'
             '\n'
             ' + HOTSPOT CONFIG:\n'
             f'{hotspot_summary}'

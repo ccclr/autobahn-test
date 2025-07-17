@@ -94,6 +94,8 @@ pub struct Parameters {
     pub use_ride_share: bool,
     pub car_timeout: u64,
 
+    pub cut_condition_type: u8,
+
     //asynchrony simulation:
     // pub simulate_asynchrony: bool,
     // pub asynchrony_start: u64,
@@ -131,12 +133,13 @@ impl Default for Parameters {
             use_ride_share: false,
             car_timeout: 2000,
 
+            cut_condition_type: 2,
             //Async simulation:
             // simulate_asynchrony: false,
             // asynchrony_start: 20_000, //20 second in
             // asynchrony_duration: 10_000, //10 seconds
 
-             //Async simulation:
+            //Async simulation:
             simulate_asynchrony: false,
             asynchrony_type: vec![0].into(), 
             asynchrony_start: vec![20_000].into(), //20 second in
@@ -168,6 +171,7 @@ impl Parameters {
         info!("Optimistic tips enabled? {}", self.use_optimistic_tips);
         info!("Parallel Proposals enabled? {}. K: {}", self.use_parallel_proposals, self.k);
         info!("Ride share enabled? {}. Car timeout: {}", self.use_ride_share, self.car_timeout);
+        info!("Cut condition type{}", self.cut_condition_type);
     }
 }
 

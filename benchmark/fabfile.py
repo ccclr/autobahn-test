@@ -54,6 +54,7 @@ def local(ctx, debug=True):
         'fast_path_timeout': 200,
         'use_ride_share': False,
         'car_timeout': 2000,
+        'cut_condition_type': 1,
 
         'simulate_asynchrony': False,
         'asynchrony_type': [3],
@@ -65,6 +66,8 @@ def local(ctx, debug=True):
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,
+        
+        
     }
     try:
         ret = LocalBench(bench_params, node_params).run(debug)
