@@ -141,9 +141,9 @@ def remote(ctx, debug=True):
         'workers': 1,
         'co-locate': True,
         'rate': [100_000, 150_000, 190_000, 180_000, 200_000],
-        'rate': [100_000],
+        # 'rate': [100_000],
         'tx_size': 512,
-        'duration': 60,
+        'duration': 20,
         'runs': 2,
 
         # Unused
@@ -152,8 +152,8 @@ def remote(ctx, debug=True):
         'partition_duration': 5,
         'partition_nodes': 2,
         
-        'enable_hotspot': False,
-        'hotspot_windows':[[20, 40]],
+        'enable_hotspot': True,
+        'hotspot_windows':[[5, 10]],
         'hotspot_nodes': [2],
         'hotspot_rates': [0.4],
     }
