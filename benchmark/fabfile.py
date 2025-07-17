@@ -173,6 +173,7 @@ def remote(ctx, debug=True):
         'fast_path_timeout': 100,
         'use_ride_share': False,
         'car_timeout': 2000,
+        'cut_condition_type': 1,
 
         'simulate_asynchrony': False,
         'asynchrony_type': [3],
