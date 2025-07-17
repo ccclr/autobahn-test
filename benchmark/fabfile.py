@@ -150,9 +150,9 @@ def remote(ctx, debug=True):
         'partition_nodes': 2,
         
         'enable_hotspot': True,
-        'hotspot_windows':[[5, 10]],
-        'hotspot_nodes': [2],
-        'hotspot_rates': [0.2],
+        'hotspot_windows':[[5, 7], [7, 10]],
+        'hotspot_nodes': [2, 2],
+        'hotspot_rates': [0.2, 0.2],
     }
     node_params = {
         'timeout_delay': 1500,  # ms
