@@ -140,10 +140,10 @@ def remote(ctx, debug=True):
         'nodes': [4],
         'workers': 1,
         'co-locate': True,
-        # 'rate': [100_000, 150_000, 180_000, 200_000],
+        'rate': [100_000, 150_000, 190_000, 180_000, 200_000],
         'rate': [100_000],
         'tx_size': 512,
-        'duration': 10,
+        'duration': 60,
         'runs': 2,
 
         # Unused
@@ -152,10 +152,10 @@ def remote(ctx, debug=True):
         'partition_duration': 5,
         'partition_nodes': 2,
         
-        'enable_hotspot': True,
-        'hotspot_windows':[[5, 7], [7, 10]],
-        'hotspot_nodes': [2, 2],
-        'hotspot_rates': [0.2, 0.2],
+        'enable_hotspot': False,
+        'hotspot_windows':[[20, 40]],
+        'hotspot_nodes': [2],
+        'hotspot_rates': [0.4],
     }
     node_params = {
         'timeout_delay': 1500,  # ms

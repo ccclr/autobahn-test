@@ -171,7 +171,7 @@ impl Parameters {
         info!("Optimistic tips enabled? {}", self.use_optimistic_tips);
         info!("Parallel Proposals enabled? {}. K: {}", self.use_parallel_proposals, self.k);
         info!("Ride share enabled? {}. Car timeout: {}", self.use_ride_share, self.car_timeout);
-        info!("Cut condition type{}", self.cut_condition_type);
+        info!("Cut condition type: {}", self.cut_condition_type);
     }
 }
 

@@ -373,7 +373,7 @@ class Bench:
             #    print('deleting partition')
             #    self._delete_partition(bench_parameters, committee, faults)
 
-            sleep(ceil(duration / 20))
+            sleep(duration)
         self.kill(hosts=hosts, delete_logs=False)
 
     def _simulate_partition(self, bench_parameters, committee, faults):
