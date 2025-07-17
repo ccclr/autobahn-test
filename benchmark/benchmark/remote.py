@@ -373,7 +373,7 @@ class Bench:
             #    print('deleting partition')
             #    self._delete_partition(bench_parameters, committee, faults)
 
-            sleep(duration)
+            sleep(ceil(duration / 20))
         self.kill(hosts=hosts, delete_logs=False)
 
     def _simulate_partition(self, bench_parameters, committee, faults):
@@ -524,7 +524,6 @@ class Bench:
 
                         faults = bench_parameters.faults
                         logger = self._logs(committee_copy, faults)
-                        
                         result_file = PathMaker.result_file(
                             faults,
                             n, 
