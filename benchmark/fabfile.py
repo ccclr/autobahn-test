@@ -23,7 +23,7 @@ def local(ctx, debug=True):
         'faults': 0, 
         'nodes': 4,
         'workers': 1,
-        'rate': 100000,
+        'rate': 150000,
         'tx_size': 512,
         'duration': 10,
 
@@ -34,9 +34,9 @@ def local(ctx, debug=True):
         'partition_nodes': 1,
         
         'enable_hotspot': True,
-        'hotspot_windows':[[5, 10]],
+        'hotspot_windows':[[0, 10]],
         'hotspot_nodes': [2],
-        'hotspot_rates': [0.4],
+        'hotspot_rates': [0.8],
     }
     node_params = {
         'timeout_delay': 1_000,  # ms
@@ -140,8 +140,8 @@ def remote(ctx, debug=True):
         'nodes': [10],
         'workers': 1,
         'co-locate': True,
-        'rate': [190_000, 190_000, 100_000, 150_000, 200_000],
-        # 'rate': [100_000, 150_000, 200_000],
+        # 'rate': [180_000, 190_000, 150_000, 100_000, 200_000],
+        'rate': [180_000, 190_000],
         'tx_size': 512,
         'duration': 60,
         'runs': 2,
@@ -152,10 +152,10 @@ def remote(ctx, debug=True):
         'partition_duration': 5,
         'partition_nodes': 2,
         
-        'enable_hotspot': False,
-        'hotspot_windows':[[20, 40]],
-        'hotspot_nodes': [3],
-        'hotspot_rates': [0.4],
+        'enable_hotspot': True,
+        'hotspot_windows':[[0, 60]],
+        'hotspot_nodes': [5],
+        'hotspot_rates': [1],
     }
     node_params = {
         'timeout_delay': 1500,  # ms
@@ -166,10 +166,10 @@ def remote(ctx, debug=True):
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
         'max_batch_delay': 200,  # ms
-        'use_optimistic_tips': True,
+        'use_optimistic_tips': False,
         'use_parallel_proposals': True,
         'k': 1,
-        'use_fast_path': True,
+        'use_fast_path': False,
         'fast_path_timeout': 100,
         'use_ride_share': False,
         'car_timeout': 2000,

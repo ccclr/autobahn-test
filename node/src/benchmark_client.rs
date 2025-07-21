@@ -159,23 +159,23 @@ fn parse_hotspot_config(matches: &clap::ArgMatches) -> Result<Option<HotspotConf
 
 #[derive(Debug, Clone)]
 pub struct HotspotConfig {
-    pub hotspot_windows: Vec<(u64, u64)>, // 时间段 [start, end] in seconds
-    pub hotspot_nodes: Vec<usize>,         // 每个时间段的热点节点数量
-    pub hotspot_rates: Vec<f64>,           // 每个时间段的速率增长倍数
+    pub hotspot_windows: Vec<(u64, u64)>, // [start, end] in seconds
+    pub hotspot_nodes: Vec<usize>,         // Number of hotspot nodes for each window
+    pub hotspot_rates: Vec<f64>,           // Rate increase multiplier for each window
 }
 
 impl HotspotConfig {
-    /// 计算指定时间和节点的到达率，保持总体速率恒定
+    /// Calculate the arrival rate for a given time and node, keeping the total rate constant
     pub fn get_arrival_rate(&self, elapsed_secs: u64, base_rate: f64, node_idx: usize, total_nodes: usize) -> f64 {
-        // 检查是否在任何热点窗口内
+        // Check if within any hotspot window
         for ((start_end, &num_hotspot), &rate_increase) in self.hotspot_windows.iter()
             .zip(&self.hotspot_nodes)
             .zip(&self.hotspot_rates) {
             let (start, end) = *start_end;
             
-            // 检查当前时间是否在窗口内
+            // Check if the current time is within the window
             if elapsed_secs >= start && elapsed_secs <= end {
-                // 在热点窗口内，需要重新分配速率
+                // Within hotspot window, need to redistribute rate
                 return self.calculate_redistributed_rate(
                     base_rate, 
                     node_idx, 
@@ -186,39 +186,39 @@ impl HotspotConfig {
             }
         }
         
-        // 窗口外，所有节点均匀分配
+        // Outside the window, all nodes share the rate evenly
         base_rate
     }
     
-    /// 计算重分配后的速率，保持总体恒定
+    /// Calculate the redistributed rate, keeping the total rate constant
     fn calculate_redistributed_rate(&self, base_rate: f64, node_idx: usize, total_nodes: usize, num_hotspot: usize, rate_increase: f64) -> f64 {
         if num_hotspot >= total_nodes {
-            // 如果热点节点数量 >= 总节点数，所有节点都是热点
+            // If the number of hotspot nodes >= total nodes, all nodes are hotspots
             return base_rate;
         }
         
         let non_hotspot_nodes = total_nodes - num_hotspot;
         
         if node_idx < num_hotspot {
-            // 热点节点：获得额外的速率
-            // 计算公式：保证总速率 = total_nodes * base_rate
+            // Hotspot node: gets extra rate
+            // Formula: ensure total rate = total_nodes * base_rate
             // hotspot_rate * num_hotspot + normal_rate * non_hotspot_nodes = total_nodes * base_rate
             // hotspot_rate = base_rate * (1 + rate_increase)
-            // 解出 normal_rate，然后返回 hotspot_rate
+            // Solve for normal_rate, then return hotspot_rate
             
             let total_target_rate = total_nodes as f64 * base_rate;
             let hotspot_rate = base_rate * (1.0 + rate_increase);
             let remaining_rate = total_target_rate - (num_hotspot as f64 * hotspot_rate);
             
-            // 确保剩余速率为正
+            // Ensure remaining rate is positive
             if remaining_rate < 0.0 {
-                // 如果增长过大，限制热点节点速率
+                // If the increase is too large, limit the hotspot node rate
                 return total_target_rate / num_hotspot as f64;
             }
             
             hotspot_rate
         } else {
-            // 非热点节点：速率减少以补偿热点节点的增加
+            // Non-hotspot node: rate decreases to compensate for hotspot nodes
             let total_target_rate = total_nodes as f64 * base_rate;
             let hotspot_rate = base_rate * (1.0 + rate_increase);
             let total_hotspot_rate = num_hotspot as f64 * hotspot_rate;
@@ -230,19 +230,19 @@ impl HotspotConfig {
             
             let normal_rate = remaining_rate / non_hotspot_nodes as f64;
             
-            // 确保速率不为负
+            // Ensure rate is not negative
             normal_rate.max(0.0)
         }
     }
 }
 
 struct Client {
-    target: SocketAddr,                    // 指定要连接的 worker
-    size: usize,                          // 指定事务的字节大小
-    rate: u64,                            // 基础发送速率
-    nodes: Vec<SocketAddr>,               // 所有节点的地址
-    node_id: usize,                       // 当前客户端节点的索引
-    hotspot_config: Option<HotspotConfig>, // 热点配置
+    target: SocketAddr,                    // The network address of the node where to send txs
+    size: usize,                          // The size of each transaction in bytes
+    rate: u64,                            // The base sending rate
+    nodes: Vec<SocketAddr>,               // All node addresses
+    node_id: usize,                       // The index of this client node (0-based)
+    hotspot_config: Option<HotspotConfig>, // Hotspot configuration
 }
 
 impl Client {
@@ -285,7 +285,7 @@ impl Client {
                 self.rate as f64
             };
             
-            // 计算当前突发周期内应该发送的事务数量
+            // Calculate the number of transactions to send in the current burst period
             let burst = (current_rate / PRECISION as f64).round() as u64;
             
             info!("Current transaction rate: {:.2} tx/s at time {}s", current_rate, elapsed_secs);
@@ -294,9 +294,9 @@ impl Client {
                 
             // }
 
-            // 在当前突发周期内发送事务
+            // Send transactions in the current burst period
             for _x in 0..burst {
-                // 获取当前系统时间戳（微秒）
+                // Get the current system timestamp (microseconds)
                 let timestamp_us = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
@@ -314,7 +314,7 @@ impl Client {
                 tx.resize(self.size, 0u8); // Truncate any bits past size
                 let bytes = tx.split().freeze(); // split() moves byte content from tx to bytes
 
-                // 发送事务
+                // Send transaction
                 if let Err(e) = transport.send(bytes).await {
                     warn!("Failed to send transaction: {}", e);
                     break 'main;
@@ -323,7 +323,7 @@ impl Client {
                 counter += 1; 
             }
             
-            // 检查是否发送时间过长
+            // Check if sending time is too long
             if now.elapsed().as_millis() > BURST_DURATION as u128 {
                 // NOTE: This log entry is used to compute performance.
                 warn!("Transaction rate too high for this client");
