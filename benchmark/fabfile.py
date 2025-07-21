@@ -140,8 +140,8 @@ def remote(ctx, debug=True):
         'nodes': [10],
         'workers': 1,
         'co-locate': True,
-        # 'rate': [180_000, 190_000, 150_000, 100_000, 200_000],
-        'rate': [180_000, 190_000],
+        'rate': [180_000, 190_000, 150_000, 100_000, 200_000],
+        # 'rate': [180_000, 190_000],
         'tx_size': 512,
         'duration': 60,
         'runs': 2,
@@ -152,7 +152,7 @@ def remote(ctx, debug=True):
         'partition_duration': 5,
         'partition_nodes': 2,
         
-        'enable_hotspot': True,
+        'enable_hotspot': False,
         'hotspot_windows':[[0, 60]],
         'hotspot_nodes': [5],
         'hotspot_rates': [1],
@@ -166,14 +166,14 @@ def remote(ctx, debug=True):
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
         'max_batch_delay': 200,  # ms
-        'use_optimistic_tips': False,
+        'use_optimistic_tips': True,
         'use_parallel_proposals': True,
         'k': 1,
-        'use_fast_path': False,
+        'use_fast_path': True,
         'fast_path_timeout': 100,
         'use_ride_share': False,
         'car_timeout': 2000,
-        'cut_condition_type': 2,
+        'cut_condition_type': 1,
 
         'simulate_asynchrony': False,
         'asynchrony_type': [3],
