@@ -74,24 +74,19 @@ class Bench:
             'sudo apt-get -y upgrade',
             'sudo apt-get -y autoremove',
 
-            # 安装依赖
             'sudo apt-get -y install build-essential',
             'sudo apt-get -y install cmake',
             'sudo apt-get -y install clang git curl',
 
-            # 安装 Rust（非交互）
             'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y',
             'source $HOME/.cargo/env',
             'rustup default stable',
 
-            # 克隆代码
-            f'(git clone {self.settings.repo_url} {self.settings.repo_name} || (cd {self.settings.repo_name} && git pull))',
+            f'(git clone {self.settings.repo_url} {self.settings.repo_name} || (cd {self.settings.repo_name} && git pull --rebase))',
             f'(cd {self.settings.repo_name} && git checkout {self.settings.branch})',
 
-            # 编译 release
             f'(cd {self.settings.repo_name} && source $HOME/.cargo/env && cargo build --release)',
 
-            # 创建符号链接
             f'ln -sf {self.settings.repo_name}/target/release/node ~/node',
             f'ln -sf {self.settings.repo_name}/target/release/benchmark_client ~/benchmark_client',
         ]
