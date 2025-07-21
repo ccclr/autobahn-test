@@ -324,7 +324,7 @@ impl Core {
                 car_timer_futures: FuturesUnordered::new(),
                 fast_timer_futures: FuturesUnordered::new(),
                 already_set_timers: false,
-                cut_condition_type: 2,
+                cut_condition_type,
                 //simulate_asynchrony,
                 // asynchrony_start,
                 // asynchrony_duration,
@@ -1704,10 +1704,12 @@ impl Core {
         debug!("current proposals {:?}", current_proposals);
         debug!("prepare proposal tips {:?}", prepare_proposals);
 
-        if self.cut_condition_type ==1 {
+        if self.cut_condition_type == 1 {
+            debug!("validity_threshold");
             new_tips.len() as u32 >= self.committee.validity_threshold()
         }
         else{
+            debug!("quorum_threshold");
             new_tips.len() as u32 >= self.committee.quorum_threshold()
         }
     }
