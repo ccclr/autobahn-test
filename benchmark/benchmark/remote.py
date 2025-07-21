@@ -524,7 +524,6 @@ class Bench:
 
                         faults = bench_parameters.faults
                         logger = self._logs(committee_copy, faults)
-                        
                         result_file = PathMaker.result_file(
                             faults,
                             n, 

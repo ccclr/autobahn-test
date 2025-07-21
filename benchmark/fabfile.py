@@ -23,7 +23,7 @@ def local(ctx, debug=True):
         'faults': 0, 
         'nodes': 4,
         'workers': 1,
-        'rate': 100000,
+        'rate': 150000,
         'tx_size': 512,
         'duration': 10,
 
@@ -34,9 +34,9 @@ def local(ctx, debug=True):
         'partition_nodes': 1,
         
         'enable_hotspot': True,
-        'hotspot_windows':[[5, 10]],
+        'hotspot_windows':[[0, 10]],
         'hotspot_nodes': [2],
-        'hotspot_rates': [0.2],
+        'hotspot_rates': [0.8],
     }
     node_params = {
         'timeout_delay': 1_000,  # ms
@@ -54,6 +54,7 @@ def local(ctx, debug=True):
         'fast_path_timeout': 200,
         'use_ride_share': False,
         'car_timeout': 2000,
+        'cut_condition_type': 1,
 
         'simulate_asynchrony': False,
         'asynchrony_type': [3],
@@ -65,6 +66,8 @@ def local(ctx, debug=True):
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,
+        
+        
     }
     try:
         ret = LocalBench(bench_params, node_params).run(debug)
@@ -134,13 +137,13 @@ def remote(ctx, debug=True):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
-        'nodes': [4],
+        'nodes': [10],
         'workers': 1,
         'co-locate': True,
-        # 'rate': [100_000, 150_000, 180_000, 200_000],
-        'rate': [100_000],
+        # 'rate': [180_000, 190_000, 150_000, 100_000, 200_000],
+        'rate': [180_000, 190_000],
         'tx_size': 512,
-        'duration': 10,
+        'duration': 60,
         'runs': 2,
 
         # Unused
@@ -150,9 +153,9 @@ def remote(ctx, debug=True):
         'partition_nodes': 2,
         
         'enable_hotspot': True,
-        'hotspot_windows':[[5, 10]],
-        'hotspot_nodes': [2],
-        'hotspot_rates': [0.2],
+        'hotspot_windows':[[0, 60]],
+        'hotspot_nodes': [5],
+        'hotspot_rates': [1],
     }
     node_params = {
         'timeout_delay': 1500,  # ms
@@ -163,13 +166,14 @@ def remote(ctx, debug=True):
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
         'max_batch_delay': 200,  # ms
-        'use_optimistic_tips': True,
+        'use_optimistic_tips': False,
         'use_parallel_proposals': True,
         'k': 1,
-        'use_fast_path': True,
+        'use_fast_path': False,
         'fast_path_timeout': 100,
         'use_ride_share': False,
         'car_timeout': 2000,
+        'cut_condition_type': 2,
 
         'simulate_asynchrony': False,
         'asynchrony_type': [3],

@@ -178,7 +178,7 @@ class NodeParameters:
     def __init__(self, json):
         required_ints = [
             'timeout_delay', 'header_size', 'max_header_delay', 'gc_depth',
-            'sync_retry_delay', 'sync_retry_nodes', 'batch_size', 'max_batch_delay'
+            'sync_retry_delay', 'sync_retry_nodes', 'batch_size', 'max_batch_delay','cut_condition_type'
         ]
         optional_bools = [
             'use_optimistic_tips', 'use_parallel_proposals', 'use_fast_path',
@@ -193,21 +193,21 @@ class NodeParameters:
         hotspot_info =[
             'node_id', 'hotspot-windows', 'hotspot-nodes', 'hotspot-rates'
         ]
-        for key in required_ints:
-            if key not in json or not isinstance(json[key], int):
-                raise ConfigError(f'Malformed parameters: missing or invalid key {key}')
-        for key in optional_bools:
-            if key in json and not isinstance(json[key], bool):
-                raise ConfigError(f'Invalid type for {key}, should be bool')
-        for key in optional_ints:
-            if key in json and not isinstance(json[key], int):
-                raise ConfigError(f'Invalid type for {key}, should be int')
-        for key in optional_lists:
-            if key in json and not isinstance(json[key], list):
-                raise ConfigError(f'Invalid type for {key}, should be list')
-        for key in hotspot_info:
-            if key in json and not isinstance(json[key], list):
-                raise ConfigError(f'Invalid type for {key}, should be list')
+        # for key in required_ints:
+        #     if key not in json or not isinstance(json[key], int):
+        #         raise ConfigError(f'Malformed parameters: missing or invalid key {key}')
+        # for key in optional_bools:
+        #     if key in json and not isinstance(json[key], bool):
+        #         raise ConfigError(f'Invalid type for {key}, should be bool')
+        # for key in optional_ints:
+        #     if key in json and not isinstance(json[key], int):
+        #         raise ConfigError(f'Invalid type for {key}, should be int')
+        # for key in optional_lists:
+        #     if key in json and not isinstance(json[key], list):
+        #         raise ConfigError(f'Invalid type for {key}, should be list')
+        # for key in hotspot_info:
+        #     if key in json and not isinstance(json[key], list):
+        #         raise ConfigError(f'Invalid type for {key}, should be list')
         self.json = json
 
     def print(self, filename):
