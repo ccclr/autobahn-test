@@ -137,13 +137,13 @@ def remote(ctx, debug=True):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
-        'nodes': [10],
+        'nodes': [4],
         'workers': 1,
         'collocate': False,
         # 'rate': [130_000, 140_000, 150_000],
-        'rate': [180_000],
+        'rate': [140_000],
         'tx_size': 512,
-        'duration': 60,
+        'duration': 20,
         'runs': 2,
 
         # Unused
@@ -153,14 +153,14 @@ def remote(ctx, debug=True):
         'partition_nodes': 2,
         
         'enable_hotspot': True,
-        'hotspot_windows':[[0, 60]],
-        'hotspot_nodes': [5],
+        'hotspot_windows':[[0, 20]],
+        'hotspot_nodes': [2],
         'hotspot_rates': [0.5],
     }
     node_params = {
         'timeout_delay': 1500,  # ms
         'header_size': 1000,  # bytes
-        'max_header_delay': 1000,  # ms
+        'max_header_delay': 1500,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes
@@ -173,7 +173,7 @@ def remote(ctx, debug=True):
         'fast_path_timeout': 100,
         'use_ride_share': False,
         'car_timeout': 2000,
-        'cut_condition_type': 2,
+        'cut_condition_type': 1,
 
         'simulate_asynchrony': False,
         'asynchrony_type': [3],
