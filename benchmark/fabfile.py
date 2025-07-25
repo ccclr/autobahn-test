@@ -141,9 +141,9 @@ def remote(ctx, debug=True):
         'workers': 1,
         'collocate': False,
         # 'rate': [130_000, 140_000, 150_000],
-        'rate': [140_000],
+        'rate': [180_000],
         'tx_size': 512,
-        'duration': 20,
+        'duration': 60,
         'runs': 2,
 
         # Unused
@@ -153,14 +153,14 @@ def remote(ctx, debug=True):
         'partition_nodes': 2,
         
         'enable_hotspot': True,
-        'hotspot_windows':[[0, 20]],
+        'hotspot_windows':[[0, 60]],
         'hotspot_nodes': [2],
-        'hotspot_rates': [0.5],
+        'hotspot_rates': [0.8],
     }
     node_params = {
         'timeout_delay': 1500,  # ms
         'header_size': 1000,  # bytes
-        'max_header_delay': 1500,  # ms
+        'max_header_delay': 1000,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes

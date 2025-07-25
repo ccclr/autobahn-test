@@ -1704,7 +1704,7 @@ impl Core {
         debug!("current proposals {:?}", current_proposals);
         debug!("prepare proposal tips {:?}", prepare_proposals);
 
-        debug!("cut_condition = {}", self.cut_condition_type);
+        debug!("Cut condition = {}", self.cut_condition_type);
         return new_tips.len() as u8 >= self.cut_condition_type
 
         // if self.cut_condition_type == 1 {
