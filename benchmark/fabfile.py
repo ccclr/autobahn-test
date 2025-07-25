@@ -41,7 +41,7 @@ def local(ctx, debug=True):
     node_params = {
         'timeout_delay': 1_000,  # ms
         'header_size': 32,  # bytes
-        'max_header_delay': 200,  # ms
+        'max_header_delay': 1000,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 1_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes
@@ -77,7 +77,7 @@ def local(ctx, debug=True):
 
 
 @task
-def create(ctx, nodes=8):
+def create(ctx, nodes=3):
     ''' Create a testbed'''
     try:
         InstanceManager.make().create_instances(nodes)
@@ -139,9 +139,9 @@ def remote(ctx, debug=True):
         'faults': 0,
         'nodes': [10],
         'workers': 1,
-        'co-locate': True,
-        'rate': [180_000, 190_000, 150_000, 100_000, 200_000],
-        # 'rate': [180_000, 190_000],
+        'collocate': False,
+        # 'rate': [130_000, 140_000, 150_000],
+        'rate': [180_000],
         'tx_size': 512,
         'duration': 60,
         'runs': 2,
@@ -152,28 +152,28 @@ def remote(ctx, debug=True):
         'partition_duration': 5,
         'partition_nodes': 2,
         
-        'enable_hotspot': False,
+        'enable_hotspot': True,
         'hotspot_windows':[[0, 60]],
         'hotspot_nodes': [5],
-        'hotspot_rates': [1],
+        'hotspot_rates': [0.5],
     }
     node_params = {
         'timeout_delay': 1500,  # ms
         'header_size': 1000,  # bytes
-        'max_header_delay': 200,  # ms
+        'max_header_delay': 1000,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
         'max_batch_delay': 200,  # ms
-        'use_optimistic_tips': True,
+        'use_optimistic_tips': False,
         'use_parallel_proposals': True,
         'k': 1,
-        'use_fast_path': True,
+        'use_fast_path': False,
         'fast_path_timeout': 100,
         'use_ride_share': False,
         'car_timeout': 2000,
-        'cut_condition_type': 1,
+        'cut_condition_type': 2,
 
         'simulate_asynchrony': False,
         'asynchrony_type': [3],

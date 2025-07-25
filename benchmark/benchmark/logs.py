@@ -315,52 +315,31 @@ class LogParser:
         hotspot_analysis['enabled'] = hotspot_enabled
         
         if hotspot_enabled:
-            # 分析每个节点的速率变化
             node_performances = {}
             total_transactions = 0
-            
+            # 运行时间用 self.commits 的最大时间减去 self.start 的最小时间
+            duration = max(self.commits.values()) - min(self.start) if self.commits and self.start else 0.0001
             for i, info in enumerate(self.hotspot_info):
                 node_id = info.get('node_id', i)
                 base_rate = self.rate[i] if i < len(self.rate) else 0
-                
                 node_performance = {
                     'base_rate': base_rate,
                     'node_id': node_id
                 }
-                
-                if 'rate_changes' in info:
-                    node_performance['rate_changes'] = info['rate_changes']
-                    # 计算平均实际速率
-                    if info['rate_changes']:
-                        actual_rates = [rate for rate, _ in info['rate_changes']]
-                        node_performance['avg_actual_rate'] = sum(actual_rates) / len(actual_rates)
-                    else:
-                        node_performance['avg_actual_rate'] = base_rate
-                else:
-                    node_performance['avg_actual_rate'] = base_rate
-                
                 # 统计该节点发送的事务数
                 if i < len(self.sent_samples):
                     node_tx_count = len(self.sent_samples[i])
                     node_performance['transactions_sent'] = node_tx_count
+                    node_performance['actual_rate'] = node_tx_count / duration if duration > 0 else 0
                     total_transactions += node_tx_count
-                
+                else:
+                    node_performance['transactions_sent'] = 0
+                    node_performance['actual_rate'] = 0
                 node_performances[node_id] = node_performance
-            
             hotspot_analysis['node_performances'] = node_performances
             hotspot_analysis['total_transactions'] = total_transactions
-            
-            # 提取热点窗口配置
             if self.hotspot_info and 'windows' in self.hotspot_info[0]:
                 hotspot_analysis['windows'] = self.hotspot_info[0]['windows']
-            
-            # 计算聚合吞吐量增益
-            if node_performances:
-                total_base_rate = sum(perf['base_rate'] for perf in node_performances.values())
-                total_actual_rate = sum(perf['avg_actual_rate'] for perf in node_performances.values())
-                if total_base_rate > 0:
-                    hotspot_analysis['throughput_increase'] = (total_actual_rate - total_base_rate) / total_base_rate
-        
         return hotspot_analysis
 
     def result(self):
@@ -420,7 +399,7 @@ class LogParser:
                 hotspot_summary += ' Node performances:\n'
                 for node_id, perf in hotspot_analysis['node_performances'].items():
                     hotspot_summary += f' Node {node_id}: base={perf["base_rate"]}, '
-                    hotspot_summary += f' actual={perf["avg_actual_rate"]:.1f}, '
+                    hotspot_summary += f' actual={perf["actual_rate"]:.1f}, '
                     hotspot_summary += f' txs={perf.get("transactions_sent", "N/A")}\n'
         else:
             hotspot_summary += f' Enable hotspot: False\n'

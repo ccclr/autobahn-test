@@ -114,80 +114,57 @@ class Bench:
             raise BenchError('Failed to kill nodes', FabricError(e))
 
     def _select_hosts(self, bench_parameters):
-        # Collocate the primary and its workers on the same machine.
         if bench_parameters.collocate:
             nodes = max(bench_parameters.nodes)
             EXCLUDED_ZONES = ['us-central1-c']
-
             hosts_dict = self.manager.hosts()
-
             filtered_hosts = {
                 region: nodes for region, nodes in hosts_dict.items()
                 if region.lower() not in EXCLUDED_ZONES
             }
-
             all_nodes = [ip for nodes in filtered_hosts.values() for ip in nodes]
-
             if len(all_nodes) < nodes:
                 Print.warn(f"Not enough hosts after excluding zones: {len(all_nodes)} < {nodes}")
                 return []
-            
             ordered = all_nodes
             return ordered[:nodes]
-
-        # Spawn the primary and each worker on a different machine. Each
-        # authority runs in a single data center.
         else:
             primaries = max(bench_parameters.nodes)
-
-            # Ensure there are enough hosts.
-            hosts = self.manager.hosts()
-            if len(hosts.keys()) < primaries:
+            total_needed = primaries * (bench_parameters.workers + 1)
+            hosts_dict = self.manager.hosts()
+            all_nodes = [ip for nodes in hosts_dict.values() for ip in nodes]
+            all_nodes = sorted(all_nodes, key=lambda ip: tuple(int(x) for x in ip.split('.')))
+            if len(all_nodes) < total_needed:
+                Print.warn(f"Not enough hosts: {len(all_nodes)} < {total_needed}")
                 return []
-            for ips in hosts.values():
-                if len(ips) < bench_parameters.workers + 1:
-                    return []
-
-            # Ensure the primary and its workers are in the same region.
             selected = []
-            for region in list(hosts.keys())[:primaries]:
-                ips = list(hosts[region])[:bench_parameters.workers + 1]
-                selected.append(ips)
+            for i in range(primaries):
+                group = all_nodes[i*(bench_parameters.workers+1):(i+1)*(bench_parameters.workers+1)]
+                selected.append(group)
             return selected
 
     def _select_hosts_config(self, bench_parameters):
-        # Collocate the primary and its workers on the same machine.
         if bench_parameters.collocate:
             nodes = max(bench_parameters.nodes)
-
-            # Ensure there are enough hosts.
             hosts = self.manager.internal_hosts()
             if sum(len(x) for x in hosts.values()) < nodes:
                 return []
-
-            # Select the hosts in different data centers.
             ordered = [x for y in hosts.values() for x in y]
             assert len(ordered) >= nodes, f"Not enough hosts: got {len(ordered)}, need {nodes}"
             return ordered[:nodes]
-
-        # Spawn the primary and each worker on a different machine. Each
-        # authority runs in a single data center.
         else:
             primaries = max(bench_parameters.nodes)
-
-            # Ensure there are enough hosts.
+            total_needed = primaries * (bench_parameters.workers + 1)
             hosts = self.manager.internal_hosts()
-            if len(hosts.keys()) < primaries:
+            all_nodes = [ip for nodes in hosts.values() for ip in nodes]
+            # 按IP地址从小到大排序
+            all_nodes = sorted(all_nodes, key=lambda ip: tuple(int(x) for x in ip.split('.')))
+            if len(all_nodes) < total_needed:
                 return []
-            for ips in hosts.values():
-                if len(ips) < bench_parameters.workers + 1:
-                    return []
-
-            # Ensure the primary and its workers are in the same region.
             selected = []
-            for region in list(hosts.keys())[:primaries]:
-                ips = list(hosts[region])[:bench_parameters.workers + 1]
-                selected.append(ips)
+            for i in range(primaries):
+                group = all_nodes[i*(bench_parameters.workers+1):(i+1)*(bench_parameters.workers+1)]
+                selected.append(group)
             return selected
 
 
