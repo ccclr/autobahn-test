@@ -321,7 +321,7 @@ impl Client {
                 // Send transaction
                 if let Err(e) = transport.send(bytes).await {
                     warn!("Failed to send transaction: {}", e);
-                    break 'main;
+                    continue;
                 }
                 
                 counter += 1; 
