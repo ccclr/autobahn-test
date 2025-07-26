@@ -167,27 +167,31 @@ pub struct HotspotConfig {
 impl HotspotConfig {
     /// Calculate the arrival rate for a given time and node, keeping the total rate constant
     pub fn get_arrival_rate(&self, elapsed_secs: u64, base_rate: f64, node_idx: usize, total_nodes: usize) -> f64 {
-        // Check if within any hotspot window
-        for ((start_end, &num_hotspot), &rate_increase) in self.hotspot_windows.iter()
+        // Default values: no hotspot
+        let mut num_hotspot = 0;
+        let mut rate_increase = 0.0;
+    
+        for ((start_end, &nh), &ri) in self.hotspot_windows.iter()
             .zip(&self.hotspot_nodes)
             .zip(&self.hotspot_rates) {
             let (start, end) = *start_end;
-            
-            // Check if the current time is within the window
+    
             if elapsed_secs >= start && elapsed_secs <= end {
-                // Within hotspot window, need to redistribute rate
-                return self.calculate_redistributed_rate(
-                    base_rate, 
-                    node_idx, 
-                    total_nodes, 
-                    num_hotspot, 
-                    rate_increase
-                );
+                num_hotspot = nh;
+                rate_increase = ri;
+                break;
             }
         }
-        
-        // Outside the window, all nodes share the rate evenly
-        base_rate
+    
+        // Always call calculate_redistributed_rate — it internally handles
+        // both hotspot and non-hotspot logic based on node_idx
+        self.calculate_redistributed_rate(
+            base_rate,
+            node_idx,
+            total_nodes,
+            num_hotspot,
+            rate_increase,
+        )
     }
     
     /// Calculate the redistributed rate, keeping the total rate constant
