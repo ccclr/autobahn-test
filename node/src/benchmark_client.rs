@@ -292,7 +292,7 @@ impl Client {
             // Calculate the number of transactions to send in the current burst period
             let burst = (current_rate / PRECISION as f64).round() as u64;
             
-            info!("Current transaction rate: {:.2} tx/s at time {}s", current_rate, elapsed_secs);
+            // info!("Current transaction rate: {:.2} tx/s at time {}s", current_rate, elapsed_secs);
             // // 每秒记录一次当前速率（用于性能分析）
             // if counter % (current_rate as u64).max(1) == 0 {
                 
