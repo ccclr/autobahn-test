@@ -94,11 +94,8 @@ class LogParser:
         start = parse_time(r'\[(.*Z) .* Start ')
         misses = len(findall(r'rate too high', log))
         
-        # 修复：解析带时间戳的事务样本
-        # 优先匹配新格式（带时间戳），否则使用旧格式
         tmp_new = findall(r'\[(.*Z) .* Sending sample transaction (\d+) with timestamp (\d+)', log)
         if tmp_new:
-            # 新格式：包含时间戳
             samples = {}
             for log_time, tx_id, timestamp_us in tmp_new:
                 samples[int(tx_id)] = {
@@ -106,11 +103,9 @@ class LogParser:
                     'timestamp_us': int(timestamp_us)
                 }
         else:
-            # 兼容旧格式
             tmp = findall(r'\[(.*Z) .* sample transaction (\d+)', log)
             samples = {int(s): self._to_posix(t) for t, s in tmp} if tmp else {}
         
-        # 解析热点信息
         hotspot_info = {}
         node_id = parse_int(r'Node ID: (\d+)')
         if node_id is not None:
@@ -120,7 +115,6 @@ class LogParser:
         if total_nodes is not None:
             hotspot_info['total_nodes'] = total_nodes
         
-        # 解析热点配置
         hotspot_config_match = search(r'Hotspot configuration enabled:', log)
         if hotspot_config_match:
             hotspot_info['enabled'] = True
@@ -138,7 +132,6 @@ class LogParser:
         else:
             hotspot_info['enabled'] = False
         
-        # 解析动态速率信息
         rate_changes = findall(r'Current transaction rate: ([\d.]+) tx/s at time (\d+)s', log)
         if rate_changes:
             hotspot_info['rate_changes'] = [(float(rate), int(time)) for rate, time in rate_changes]
@@ -328,23 +321,16 @@ class LogParser:
                     'node_id': node_id
                 }
                 
-                if 'rate_changes' in info:
-                    node_performance['rate_changes'] = info['rate_changes']
-                    # 计算平均实际速率
-                    if info['rate_changes']:
-                        actual_rates = [rate for rate, _ in info['rate_changes']]
-                        node_performance['avg_actual_rate'] = sum(actual_rates) / len(actual_rates)
-                    else:
-                        node_performance['avg_actual_rate'] = base_rate
-                else:
-                    node_performance['avg_actual_rate'] = base_rate
-                
                 # 统计该节点发送的事务数
                 if i < len(self.sent_samples):
                     node_tx_count = len(self.sent_samples[i])
                     node_performance['transactions_sent'] = node_tx_count
                     total_transactions += node_tx_count
                 
+                _, _, duration = self._end_to_end_throughput()
+                
+                actual_rate = node_tx_count / duration
+                node_performance['actual_rate'] = actual_rate
                 node_performances[node_id] = node_performance
             
             hotspot_analysis['node_performances'] = node_performances
@@ -405,9 +391,9 @@ class LogParser:
             if 'total_transactions' in hotspot_analysis:
                 hotspot_summary += f' Total transactions sent: {hotspot_analysis["total_transactions"]}\n'
             
-            if 'throughput_increase' in hotspot_analysis:
-                increase_pct = hotspot_analysis['throughput_increase'] * 100
-                hotspot_summary += f' Aggregate throughput increase: {increase_pct:.1f}%\n'
+            # if 'throughput_increase' in hotspot_analysis:
+                # increase_pct = hotspot_analysis['throughput_increase'] * 100
+                # hotspot_summary += f' Aggregate throughput increase: {increase_pct:.1f}%\n'
             
             # 显示窗口分析
             if 'windows' in hotspot_analysis:                
