@@ -43,6 +43,7 @@ class LogParser:
         self.size, self.rate, self.start, misses, self.sent_samples, self.hotspot_info \
             = zip(*results)
         self.misses = sum(misses)
+        self.raw_clients = clients
 
         # Parse the primaries logs.
         try:
@@ -75,9 +76,6 @@ class LogParser:
             )
 
     def _parse_clients(self, log):
-        """
-        解析客户端日志，修复时间戳和吞吐量问题
-        """
         if search(r'Error', log) is not None:
             raise ParseError('Client(s) panicked')
         
@@ -94,11 +92,8 @@ class LogParser:
         start = parse_time(r'\[(.*Z) .* Start ')
         misses = len(findall(r'rate too high', log))
         
-        # 修复：解析带时间戳的事务样本
-        # 优先匹配新格式（带时间戳），否则使用旧格式
         tmp_new = findall(r'\[(.*Z) .* Sending sample transaction (\d+) with timestamp (\d+)', log)
         if tmp_new:
-            # 新格式：包含时间戳
             samples = {}
             for log_time, tx_id, timestamp_us in tmp_new:
                 samples[int(tx_id)] = {
@@ -106,11 +101,9 @@ class LogParser:
                     'timestamp_us': int(timestamp_us)
                 }
         else:
-            # 兼容旧格式
             tmp = findall(r'\[(.*Z) .* sample transaction (\d+)', log)
             samples = {int(s): self._to_posix(t) for t, s in tmp} if tmp else {}
         
-        # 解析热点信息
         hotspot_info = {}
         node_id = parse_int(r'Node ID: (\d+)')
         if node_id is not None:
@@ -120,7 +113,6 @@ class LogParser:
         if total_nodes is not None:
             hotspot_info['total_nodes'] = total_nodes
         
-        # 解析热点配置
         hotspot_config_match = search(r'Hotspot configuration enabled:', log)
         if hotspot_config_match:
             hotspot_info['enabled'] = True
@@ -138,7 +130,6 @@ class LogParser:
         else:
             hotspot_info['enabled'] = False
         
-        # 解析动态速率信息
         rate_changes = findall(r'Current transaction rate: ([\d.]+) tx/s at time (\d+)s', log)
         if rate_changes:
             hotspot_info['rate_changes'] = [(float(rate), int(time)) for rate, time in rate_changes]
@@ -200,7 +191,7 @@ class LogParser:
             'egress_penalty': parse_int(r'Egress penalty: (\d+)'),
             'use_fast_sync': parse_bool(r'Use fast sync: (True|False)'),
             'use_exponential_timeouts': parse_bool(r'Use exponential timeouts: (True|False)'),
-            # 'cut_condition_type': parse_int(r'Cut condition type: (\[.*?\])'),
+            'cut_condition_type': parse_int(r'Cut condition type: (\[.*?\])'),
         }
 
         m = search(r'booted on (\d+.\d+.\d+.\d+)', log)
@@ -315,38 +306,52 @@ class LogParser:
         hotspot_analysis['enabled'] = hotspot_enabled
         
         if hotspot_enabled:
+            # 分析每个节点的速率变化
             node_performances = {}
             total_transactions = 0
-            # 运行时间用 self.commits 的最大时间减去 self.start 的最小时间
-            duration = max(self.commits.values()) - min(self.start) if self.commits and self.start else 0.0001
+            
             for i, info in enumerate(self.hotspot_info):
                 node_id = info.get('node_id', i)
                 base_rate = self.rate[i] if i < len(self.rate) else 0
+                
                 node_performance = {
                     'base_rate': base_rate,
                     'node_id': node_id
                 }
-                # 统计该节点发送的事务数
+                
                 if i < len(self.sent_samples):
-                    node_tx_count = len(self.sent_samples[i])
+                    if i < len(self.raw_clients):
+                        # 查找日志中最后一个"Sending sample transaction"的序号
+                        import re
+                        last_tx_matches = re.findall(r'Sending sample transaction (\d+)', self.raw_clients[i])
+                        last_tx_number = int(last_tx_matches[-1])
+                        node_tx_count = last_tx_number
+                    else:
+                        node_tx_count = len(self.sent_samples[i])
                     node_performance['transactions_sent'] = node_tx_count
-                    node_performance['actual_rate'] = node_tx_count / duration if duration > 0 else 0
                     total_transactions += node_tx_count
-                else:
-                    node_performance['transactions_sent'] = 0
-                    node_performance['actual_rate'] = 0
+                
+                _, _, duration = self._end_to_end_throughput()
+                
+                actual_rate = node_tx_count / duration
+                node_performance['actual_rate'] = actual_rate
                 node_performances[node_id] = node_performance
+            
             hotspot_analysis['node_performances'] = node_performances
             hotspot_analysis['total_transactions'] = total_transactions
+            
             if self.hotspot_info and 'windows' in self.hotspot_info[0]:
                 hotspot_analysis['windows'] = self.hotspot_info[0]['windows']
+            
+            if node_performances:
+                total_base_rate = sum(perf['base_rate'] for perf in node_performances.values())
+                total_actual_rate = sum(perf['actual_rate'] for perf in node_performances.values())
+                if total_base_rate > 0:
+                    hotspot_analysis['throughput_increase'] = (total_actual_rate - total_base_rate) / total_base_rate
+        
         return hotspot_analysis
 
     def result(self):
-        """
-        修复后的结果函数，包含正确的延迟和吞吐量计算
-        """
-        # 合并 configs[0] 和 self.parameters_json，优先用 configs[0]
         cfg = self.parameters_json.copy()
         for k, v in self.configs[0].items():
             if v is not None:
@@ -364,7 +369,6 @@ class LogParser:
 
         end_to_end_latency = (self._end_to_end_latency() or 0) * 1_000
 
-        # 分析热点性能
         hotspot_analysis = self._analyze_hotspot_performance()
         
         def show(key, unit=""):
@@ -375,26 +379,18 @@ class LogParser:
                 return f'{v}{unit}'
             return f'{v}{unit}'
 
-        # 构建热点摘要
         hotspot_summary = ""
         if hotspot_analysis['enabled']:
             hotspot_summary += f' Enable hotspot: {hotspot_analysis["enabled"]}\n'
             
-            # 显示总体统计
             if 'total_transactions' in hotspot_analysis:
                 hotspot_summary += f' Total transactions sent: {hotspot_analysis["total_transactions"]}\n'
             
-            if 'throughput_increase' in hotspot_analysis:
-                increase_pct = hotspot_analysis['throughput_increase'] * 100
-                hotspot_summary += f' Aggregate throughput increase: {increase_pct:.1f}%\n'
-            
-            # 显示窗口分析
             if 'windows' in hotspot_analysis:                
                 for i, window in enumerate(hotspot_analysis['windows']):
                     hotspot_summary += f' Window {i+1}: {window["start"]}s-{window["end"]}s, '
                     hotspot_summary += f'{window["nodes"]} nodes, {window["rate_increase"]*100:.1f}% increase\n'
             
-            # 显示节点性能
             if 'node_performances' in hotspot_analysis:
                 hotspot_summary += ' Node performances:\n'
                 for node_id, perf in hotspot_analysis['node_performances'].items():
@@ -442,7 +438,7 @@ class LogParser:
             f' Egress penalty: {show("egress_penalty", " ms")}\n'
             f' Use fast sync: {show("use_fast_sync")}\n'
             f' Use exponential timeouts: {show("use_exponential_timeouts")}\n'
-            # f' Cut Condition: {show("cut_condition_type")}\n'
+            f' Cut Condition: {show("cut_condition_type")}\n'
             '\n'
             ' + HOTSPOT CONFIG:\n'
             f'{hotspot_summary}'

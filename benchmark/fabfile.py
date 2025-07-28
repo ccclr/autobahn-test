@@ -23,7 +23,7 @@ def local(ctx, debug=True):
         'faults': 0, 
         'nodes': 4,
         'workers': 1,
-        'rate': 150000,
+        'rate': 10000,
         'tx_size': 512,
         'duration': 10,
 
@@ -137,10 +137,10 @@ def remote(ctx, debug=True):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
-        'nodes': [4],
+        'nodes': [10],
         'workers': 1,
-        'collocate': False,
-        # 'rate': [130_000, 140_000, 150_000],
+        'collocate': True,
+        # 'rate': [170_000, 160_000],
         'rate': [180_000],
         'tx_size': 512,
         'duration': 60,
@@ -154,8 +154,8 @@ def remote(ctx, debug=True):
         
         'enable_hotspot': True,
         'hotspot_windows':[[0, 60]],
-        'hotspot_nodes': [2],
-        'hotspot_rates': [0.8],
+        'hotspot_nodes': [5],
+        'hotspot_rates': [0.5],
     }
     node_params = {
         'timeout_delay': 1500,  # ms

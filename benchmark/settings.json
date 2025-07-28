@@ -7,7 +7,7 @@
     "repo": {
         "name": "autobahn",
         "url": "https://github.com/ccclr/autobahn-test.git",
-        "branch": "test"
+        "branch": "master"
     },
     "project_id": "just-creek-462112-j2",
     "username": "ccclr0302",
