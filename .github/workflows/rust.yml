@@ -16,15 +16,15 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
-    - name: Install stable Rust + Components
+    - name: Setup stable Rust and components
       uses: actions-rs/toolchain@v1
       with:
         toolchain: stable
         components: rustfmt, clippy
         override: true
 
-    - name: Install latest bindgen (≥0.66)
-      run: cargo install bindgen --version 0.66.0
+    - name: Print Rust version
+      run: rustc --version
 
     - name: Build (default)
       run: cargo build --all-targets --verbose
