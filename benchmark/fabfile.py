@@ -141,10 +141,10 @@ def remote(ctx, debug=True):
         'workers': 1,
         'collocate': True,
         # 'rate': [170_000, 160_000],
-        'rate': [160_000],
+        'rate': [100_000, 110_000, 120_000, 130_000, 140_000, 150_000],
         'tx_size': 512,
         'duration': 120,
-        'runs': 1,
+        'runs': 2,
 
         # Unused
         'simulate_partition': False,
