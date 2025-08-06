@@ -1,0 +1,100 @@
+
+-----------------------------------------
+ SUMMARY:
+-----------------------------------------
+ + CONFIG:
+ Faults: 0 node(s)
+ Committee size: 10 node(s)
+ Worker(s) per node: 1 worker(s)
+ Collocate primary and workers: True
+ Input rate: 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000 tx/s
+ Transaction size: 512 B
+ Execution time: 60 s
+
+ Timeout delay: 1500 ms
+ Header size: 1000 B
+ Max header delay: 200 ms
+ GC depth: 50 round(s)
+ Sync retry delay: 10000 ms
+ Sync retry nodes: 4 node(s)
+ Batch size: 500000 B
+ Max batch delay: 200 ms
+ Use optimistic tips: True
+ Use parallel proposals: True
+ k: 3
+ Use fast path: True
+ Fast path timeout: 100 ms
+ Use ride share: False
+ Car timeout: 2000 ms
+ Simulate asynchrony: False
+ Asynchrony type: [3]
+ Asynchrony start: [10000]
+ Asynchrony duration: [20000]
+ Affected nodes: [2]
+ Egress penalty: 100 ms
+ Use fast sync: True
+ Use exponential timeouts: True
+ Cut Condition: 2
+
+ + HOTSPOT CONFIG:
+ Enable hotspot: False
+
+ + RESULTS:
+ Consensus TPS: 99,727 tx/s
+ Consensus BPS: 51,060,100 B/s
+ Consensus latency: 353 ms
+
+ End-to-end TPS: 99,559 tx/s
+ End-to-end BPS: 50,974,227 B/s
+ End-to-end latency: 523 ms
+-----------------------------------------
+
+-----------------------------------------
+ SUMMARY:
+-----------------------------------------
+ + CONFIG:
+ Faults: 0 node(s)
+ Committee size: 10 node(s)
+ Worker(s) per node: 1 worker(s)
+ Collocate primary and workers: True
+ Input rate: 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000 tx/s
+ Transaction size: 512 B
+ Execution time: 60 s
+
+ Timeout delay: 1500 ms
+ Header size: 1000 B
+ Max header delay: 200 ms
+ GC depth: 50 round(s)
+ Sync retry delay: 10000 ms
+ Sync retry nodes: 4 node(s)
+ Batch size: 500000 B
+ Max batch delay: 200 ms
+ Use optimistic tips: True
+ Use parallel proposals: True
+ k: 3
+ Use fast path: True
+ Fast path timeout: 100 ms
+ Use ride share: False
+ Car timeout: 2000 ms
+ Simulate asynchrony: False
+ Asynchrony type: [3]
+ Asynchrony start: [10000]
+ Asynchrony duration: [20000]
+ Affected nodes: [2]
+ Egress penalty: 100 ms
+ Use fast sync: True
+ Use exponential timeouts: True
+ Cut Condition: 2
+
+ + HOTSPOT CONFIG:
+ Enable hotspot: False
+
+ + RESULTS:
+ Consensus TPS: 99,640 tx/s
+ Consensus BPS: 51,015,485 B/s
+ Consensus latency: 212 ms
+
+ End-to-end TPS: 99,522 tx/s
+ End-to-end BPS: 50,955,155 B/s
+ End-to-end latency: 380 ms
+-----------------------------------------

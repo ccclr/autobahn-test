@@ -167,27 +167,31 @@ pub struct HotspotConfig {
 impl HotspotConfig {
     /// Calculate the arrival rate for a given time and node, keeping the total rate constant
     pub fn get_arrival_rate(&self, elapsed_secs: u64, base_rate: f64, node_idx: usize, total_nodes: usize) -> f64 {
-        // Check if within any hotspot window
-        for ((start_end, &num_hotspot), &rate_increase) in self.hotspot_windows.iter()
+        // Default values: no hotspot
+        let mut num_hotspot = 0;
+        let mut rate_increase = 0.0;
+    
+        for ((start_end, &nh), &ri) in self.hotspot_windows.iter()
             .zip(&self.hotspot_nodes)
             .zip(&self.hotspot_rates) {
             let (start, end) = *start_end;
-            
-            // Check if the current time is within the window
+    
             if elapsed_secs >= start && elapsed_secs <= end {
-                // Within hotspot window, need to redistribute rate
-                return self.calculate_redistributed_rate(
-                    base_rate, 
-                    node_idx, 
-                    total_nodes, 
-                    num_hotspot, 
-                    rate_increase
-                );
+                num_hotspot = nh;
+                rate_increase = ri;
+                break;
             }
         }
-        
-        // Outside the window, all nodes share the rate evenly
-        base_rate
+    
+        // Always call calculate_redistributed_rate — it internally handles
+        // both hotspot and non-hotspot logic based on node_idx
+        self.calculate_redistributed_rate(
+            base_rate,
+            node_idx,
+            total_nodes,
+            num_hotspot,
+            rate_increase,
+        )
     }
     
     /// Calculate the redistributed rate, keeping the total rate constant
@@ -205,33 +209,14 @@ impl HotspotConfig {
             // hotspot_rate * num_hotspot + normal_rate * non_hotspot_nodes = total_nodes * base_rate
             // hotspot_rate = base_rate * (1 + rate_increase)
             // Solve for normal_rate, then return hotspot_rate
-            
-            let total_target_rate = total_nodes as f64 * base_rate;
-            let hotspot_rate = base_rate * (1.0 + rate_increase);
-            let remaining_rate = total_target_rate - (num_hotspot as f64 * hotspot_rate);
-            
-            // Ensure remaining rate is positive
-            if remaining_rate < 0.0 {
-                // If the increase is too large, limit the hotspot node rate
-                return total_target_rate / num_hotspot as f64;
-            }
+            let hotspot_rate = base_rate ;
             
             hotspot_rate
         } else {
             // Non-hotspot node: rate decreases to compensate for hotspot nodes
-            let total_target_rate = total_nodes as f64 * base_rate;
-            let hotspot_rate = base_rate * (1.0 + rate_increase);
-            let total_hotspot_rate = num_hotspot as f64 * hotspot_rate;
-            let remaining_rate = total_target_rate - total_hotspot_rate;
-            
-            if non_hotspot_nodes == 0 {
-                return 0.0;
-            }
-            
-            let normal_rate = remaining_rate / non_hotspot_nodes as f64;
-            
-            // Ensure rate is not negative
-            normal_rate.max(0.0)
+            let normal_rate = base_rate * (1.0 - rate_increase);
+
+            normal_rate
         }
     }
 }
@@ -266,7 +251,7 @@ impl Client {
         let mut tx = BytesMut::with_capacity(self.size);
         let mut counter = 0;
         let mut transport = Framed::new(stream, LengthDelimitedCodec::new());
-        
+        let mut r = rand::thread_rng().gen();
         let start_time = Instant::now();
         let interval = interval(Duration::from_millis(BURST_DURATION));
         tokio::pin!(interval);
@@ -288,37 +273,50 @@ impl Client {
             // Calculate the number of transactions to send in the current burst period
             let burst = (current_rate / PRECISION as f64).round() as u64;
             
-            info!("Current transaction rate: {:.2} tx/s at time {}s", current_rate, elapsed_secs);
-            // // 每秒记录一次当前速率（用于性能分析）
-            // if counter % (current_rate as u64).max(1) == 0 {
-                
-            // }
-
             // Send transactions in the current burst period
-            for _x in 0..burst {
+            for x in 0..burst {
                 // Get the current system timestamp (microseconds)
                 let timestamp_us = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_micros() as u64;
 
-                info!("Sending sample transaction {} with timestamp {}", counter, timestamp_us);
-                
-                tx.put_u8(0u8); // Sample txs start with 0.
-                tx.put_u64(counter); // This counter identifies the tx.
-                tx.put_u64(timestamp_us); // Add timestamp for latency measurement
-                
-                // Include node_id to help with aggregated throughput calculation
-                tx.put_u32(self.node_id as u32);
+                if x % 10000 == 0 {
+                    // NOTE: This log entry is used to compute performance.
+                    info!("Sending sample transaction {}", counter);
 
-                tx.resize(self.size, 0u8); // Truncate any bits past size
-                let bytes = tx.split().freeze(); // split() moves byte content from tx to bytes
+                    tx.put_u8(0u8); // Sample txs start with 0.
+                    tx.put_u64(counter); // This counter identifies the tx.
+                } else {
+                    r += 1;
+                    tx.put_u8(1u8); // Standard txs start with 1.
+                    tx.put_u64(r); // Ensures all clients send different txs.
+                };
 
-                // Send transaction
-                if let Err(e) = transport.send(bytes).await {
+                tx.resize(self.size, 0u8); //Truncate any bits past size
+                let bytes = tx.split().freeze(); //split() moves byte content from tx to bytes (i.e. avoids copy). freeze() makes it const so it can be shared. (bytes can now be used/sent async)
+                //Note: Does not sign transactions. Transaction id-s are not unique w.r.t to content.
+                if let Err(e) = transport.send(bytes).await { //Uses TCP connection to send request to assigned worker. Note: Optimistically only sending to one worker.
                     warn!("Failed to send transaction: {}", e);
                     break 'main;
                 }
+            
+                
+                // tx.put_u8(0u8); // Sample txs start with 0.
+                // tx.put_u64(counter); // This counter identifies the tx.
+                // tx.put_u64(timestamp_us); // Add timestamp for latency measurement
+                
+                // // Include node_id to help with aggregated throughput calculation
+                // tx.put_u32(self.node_id as u32);
+
+                // tx.resize(self.size, 0u8); // Truncate any bits past size
+                // let bytes = tx.split().freeze(); // split() moves byte content from tx to bytes
+
+                // // Send transaction
+                // if let Err(e) = transport.send(bytes).await {
+                //     warn!("Failed to send transaction: {}", e);
+                //     continue;
+                // }
                 
                 counter += 1; 
             }
