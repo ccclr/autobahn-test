@@ -214,8 +214,7 @@ impl HotspotConfig {
             hotspot_rate
         } else {
             // Non-hotspot node: rate decreases to compensate for hotspot nodes
-            let normal_rate = base_rate * (1.0 - rate_increase);
-            normal_rate = normal_rate.min(2500.0);
+            let normal_rate = base_rate * (1.0 - rate_increase).min(2500.0);
             normal_rate
         }
     }
