@@ -23,7 +23,7 @@ def local(ctx, debug=True):
         'faults': 0, 
         'nodes': 10,
         'workers': 1,
-        'rate': 180000,
+        'rate': 10000,
         'tx_size': 512,
         'duration': 60,
 
@@ -36,7 +36,7 @@ def local(ctx, debug=True):
         'enable_hotspot': True,
         'hotspot_windows':[[0, 60]],
         'hotspot_nodes': [2],
-        'hotspot_rates': [0.9],
+        'hotspot_rates': [0],
     }
     node_params = {
         'timeout_delay': 1_000,  # ms
@@ -51,18 +51,18 @@ def local(ctx, debug=True):
         'use_parallel_proposals': True,
         'k': 3,
         'use_fast_path': True,
-        'fast_path_timeout': 100,
+        'fast_path_timeout': 800,
         'use_ride_share': False,
         'car_timeout': 2000,
         'cut_condition_type': 4,
 
-        'simulate_asynchrony': False,
-        'asynchrony_type': [4],
+        'simulate_asynchrony': True,
+        'asynchrony_type': [5],
 
         'asynchrony_start': [0], #ms
         'asynchrony_duration': [60_000], #ms
-        'affected_nodes': [4],
-        'egress_penalty': 100, #ms
+        'affected_nodes': [2],
+        'egress_penalty': 200, #ms
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,

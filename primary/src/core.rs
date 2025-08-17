@@ -48,6 +48,7 @@ pub enum AsyncEffectType {
     Failure = 2, //Send nothing for x seconds  //TODO: Combine with TempBlip?
     Partition = 3, //Send nothing to partitioned replicas for x seconds, then release all
     Egress = 4,  //For x seconds, delay all outbound messages by some amount
+    PrepareDelay = 5, //For x seconds, delay all Prepare messages by some amount
 }
 
 impl From<u8> for AsyncEffectType {
@@ -58,18 +59,10 @@ impl From<u8> for AsyncEffectType {
             2 => AsyncEffectType::Failure,
             3 => AsyncEffectType::Partition,
             4 => AsyncEffectType::Egress,
+            5 => AsyncEffectType::PrepareDelay,
             _ => AsyncEffectType::Off,
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct AsyncEffectConfig {
-    pub effect_type: AsyncEffectType,
-    pub start_time: u64,      // Start time offset (milliseconds)
-    pub duration: u64,        // Duration (milliseconds)
-    pub affected_nodes: u64,  // Number of affected nodes
-    pub egress_penalty: u64,  // Egress delay time (only for Egress type)
 }
 
 #[derive(Debug, Clone)]
@@ -79,359 +72,6 @@ pub struct DelayedMessage {
     pub target: Option<PublicKey>,
     pub is_consensus: bool,
     pub scheduled_time: Instant,
-}
-
-// Asynchronous effect simulator
-pub struct AsyncEffectSimulator {
-    // Configuration queue
-    effect_configs: VecDeque<AsyncEffectConfig>,
-    
-    // Current state
-    pub is_active: bool,
-    pub current_effect: AsyncEffectType,
-    pub current_affected_nodes: u64,
-    pub current_end_time: Instant,
-    
-    // Message buffers (categorized by effect type)
-    pub temp_blip_buffer: Vec<DelayedMessage>,
-    pub partition_buffer: Vec<DelayedMessage>,
-    
-    // Partition related
-    pub partition_nodes: HashSet<PublicKey>,
-    pub our_partition_nodes: HashSet<PublicKey>,
-    
-    // Delay queue
-    pub egress_delay_queue: DelayQueue<DelayedMessage>,
-    
-    // Failure related
-    pub failed_slots: HashSet<u64>,
-    
-    // Worker thread communication
-    worker_channel: Option<Sender<(bool, HashSet<PublicKey>)>>,
-}
-
-impl AsyncEffectSimulator {
-    pub fn new(
-        configs: Vec<AsyncEffectConfig>,
-        worker_channel: Option<Sender<(bool, HashSet<PublicKey>)>>,
-    ) -> Self {
-        Self {
-            effect_configs: configs.into(),
-            is_active: false,
-            current_effect: AsyncEffectType::Off,
-            current_affected_nodes: 0,
-            current_end_time: Instant::now(),
-            temp_blip_buffer: Vec::new(),
-            partition_buffer: Vec::new(),
-            partition_nodes: HashSet::new(),
-            our_partition_nodes: HashSet::new(),
-            egress_delay_queue: DelayQueue::new(),
-            failed_slots: HashSet::new(),
-            worker_channel,
-        }
-    }
-
-    fn extract_slot_from_consensus(&self, consensus_msg: &crate::messages::ConsensusMessage) -> u64 {
-        match consensus_msg {
-            crate::messages::ConsensusMessage::Prepare { slot, .. } => *slot,
-            crate::messages::ConsensusMessage::Confirm { slot, .. } => *slot,
-            crate::messages::ConsensusMessage::Commit { slot, .. } => *slot,
-        }
-    }
-    
-    pub async fn start_next_effect(&mut self, committee_nodes: &[PublicKey], our_node: &PublicKey) -> Option<(u64, u64)> {
-        // Use loop instead of recursion to avoid boxing issues
-        loop {
-            if let Some(config) = self.effect_configs.pop_front() {
-                // Check if current node is affected
-                if !self.is_node_affected(&config, committee_nodes, our_node) {
-                    continue; // Continue processing next configuration
-                }
-
-                self.is_active = true;
-                self.current_effect = config.effect_type.clone();
-                self.current_affected_nodes = config.affected_nodes;
-                self.current_end_time = Instant::now() + Duration::from_millis(config.duration);
-
-                // Special initialization based on effect type
-                match &config.effect_type {
-                    AsyncEffectType::Partition => {
-                        self.setup_partition(committee_nodes, our_node, config.affected_nodes);
-                    }
-                    AsyncEffectType::Egress => {
-                        // Egress effect needs to set delay queue end time
-                        self.current_end_time = Instant::now() + Duration::from_millis(config.duration);
-                    }
-                    _ => {}
-                }
-
-                // Notify worker threads
-                self.notify_workers().await;
-
-                return Some((config.start_time, config.duration));
-            } else {
-                return None;
-            }
-        }
-    }
-
-    // Check if node is affected by current effect
-    fn is_node_affected(&self, config: &AsyncEffectConfig, committee_nodes: &[PublicKey], our_node: &PublicKey) -> bool {
-        let node_index = committee_nodes.iter().position(|n| n == our_node).unwrap_or(0);
-        
-        match config.effect_type {
-            AsyncEffectType::Failure | AsyncEffectType::Egress => {
-                node_index < config.affected_nodes as usize
-            }
-            AsyncEffectType::Partition => true, // Partition affects all nodes
-            AsyncEffectType::TempBlip => true,  // Temp blip affects all nodes
-            AsyncEffectType::Off => false,
-        }
-    }
-
-    // Setup network partition
-    fn setup_partition(&mut self, committee_nodes: &[PublicKey], our_node: &PublicKey, partition_size: u64) {
-        self.partition_nodes.clear();
-        self.our_partition_nodes.clear();
-
-        let our_index = committee_nodes.iter().position(|n| n == our_node).unwrap_or(0);
-        
-        // Determine which partition we are in
-        if our_index < partition_size as usize {
-            // We are in the left partition
-            for i in 0..(partition_size as usize) {
-                if i < committee_nodes.len() {
-                    self.our_partition_nodes.insert(committee_nodes[i].clone());
-                }
-            }
-        } else {
-            // We are in the right partition
-            for i in (partition_size as usize)..committee_nodes.len() {
-                self.our_partition_nodes.insert(committee_nodes[i].clone());
-            }
-        }
-
-        // Setup all partition nodes (for later recovery)
-        for node in committee_nodes {
-            self.partition_nodes.insert(node.clone());
-        }
-    }
-
-    // Handle message sending
-    pub async fn handle_message_send(
-        &mut self,
-        message: PrimaryMessage,
-        height: u64,
-        target: Option<PublicKey>,
-        is_consensus: bool,
-        send_normal: impl Fn(PrimaryMessage, u64, Option<PublicKey>, bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
-        send_to_partition: impl Fn(&PrimaryMessage, u64, bool, bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
-    ) {
-        if !self.is_active {
-            send_normal(message, height, target, is_consensus).await;
-            return;
-        }
-
-        match self.current_effect {
-            AsyncEffectType::Off => {
-                send_normal(message, height, target, is_consensus).await;
-            }
-            
-            AsyncEffectType::TempBlip => {
-                // Buffer all messages
-                self.temp_blip_buffer.push(DelayedMessage {
-                    message,
-                    height,
-                    target,
-                    is_consensus,
-                    scheduled_time: self.current_end_time,
-                });
-            }
-            
-            AsyncEffectType::Failure => {
-                // Decide whether to drop based on message type
-                if let PrimaryMessage::ConsensusMessage(ref consensus_msg) = message {
-                    let slot = self.extract_slot_from_consensus(&consensus_msg);
-                    if self.failed_slots.is_empty() {
-                        // Record the first failed slot
-                        self.failed_slots.insert(slot);
-                        // Drop message (don't send)
-                        return;
-                    } else if self.failed_slots.contains(&slot) {
-                        // Continue dropping messages from the same slot
-                        return;
-                    }
-                }
-                // Send other messages normally
-                send_normal(message, height, target, is_consensus).await;
-            }
-            
-            AsyncEffectType::Partition => {
-                match target {
-                    Some(target_node) => {
-                        if self.our_partition_nodes.contains(&target_node) {
-                            // Target is in our partition, send normally
-                            send_normal(message, height, Some(target_node), is_consensus).await;
-                        } else {
-                            // Target is in another partition, buffer message
-                            self.partition_buffer.push(DelayedMessage {
-                                message,
-                                height,
-                                target: Some(target_node),
-                                is_consensus,
-                                scheduled_time: self.current_end_time,
-                            });
-                        }
-                    }
-                    None => {
-                        // Broadcast message: send to nodes in our partition
-                        if self.our_partition_nodes.len() > 1 {
-                            send_to_partition(&message, height, is_consensus, true).await;
-                        }
-                        // Buffer message for the other partition
-                        self.partition_buffer.push(DelayedMessage {
-                            message,
-                            height,
-                            target: None,
-                            is_consensus,
-                            scheduled_time: self.current_end_time,
-                        });
-                    }
-                }
-            }
-            
-            AsyncEffectType::Egress => {
-                // Calculate delayed send time
-                let delay_time = Instant::now() + Duration::from_millis(100); // Default 100ms delay
-                let actual_send_time = delay_time.min(self.current_end_time);
-                
-                let delayed_msg = DelayedMessage {
-                    message,
-                    height,
-                    target,
-                    is_consensus,
-                    scheduled_time: actual_send_time,
-                };
-                
-                self.egress_delay_queue.insert_at(delayed_msg, actual_send_time);
-            }
-        }
-    }
-
-    // 结束当前异步效果
-    pub async fn end_current_effect(
-        &mut self,
-        send_normal: impl Fn(PrimaryMessage, u64, Option<PublicKey>, bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
-        send_to_partition: impl Fn(&PrimaryMessage, u64, bool, bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
-    ) {
-        if !self.is_active {
-            return;
-        }
-
-        // Cleanup and send messages based on effect type
-        match self.current_effect {
-            AsyncEffectType::TempBlip => {
-                // Send all buffered messages
-                for delayed_msg in self.temp_blip_buffer.drain(..) {
-                    send_normal(
-                        delayed_msg.message,
-                        delayed_msg.height,
-                        delayed_msg.target,
-                        delayed_msg.is_consensus,
-                    ).await;
-                }
-            }
-            
-            AsyncEffectType::Partition => {
-                // Send cached messages to the other partition
-                for delayed_msg in self.partition_buffer.drain(..) {
-                    match delayed_msg.target {
-                        Some(target) => {
-                            send_normal(
-                                delayed_msg.message,
-                                delayed_msg.height,
-                                Some(target),
-                                delayed_msg.is_consensus,
-                            ).await;
-                        }
-                        None => {
-                            send_to_partition(&delayed_msg.message, delayed_msg.height, delayed_msg.is_consensus, false).await;
-                        }
-                    }
-                }
-                
-                // Clean up partition state
-                self.partition_nodes.clear();
-                self.our_partition_nodes.clear();
-            }
-            
-            AsyncEffectType::Failure => {
-                // Clean up failure state
-                self.failed_slots.clear();
-            }
-            
-            AsyncEffectType::Egress => {
-                // Egress messages are handled automatically by DelayQueue
-            }
-            
-            _ => {}
-        }
-
-        // Reset state
-        self.is_active = false;
-        self.current_effect = AsyncEffectType::Off;
-        self.current_affected_nodes = 0;
-
-        // Notify worker threads
-        self.notify_workers().await;
-    }
-
-    // 处理延迟队列中到期的消息
-    pub async fn handle_delayed_message(
-        &mut self,
-        send_normal: impl Fn(PrimaryMessage, u64, Option<PublicKey>, bool) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
-    ) -> Option<DelayedMessage> {
-        if let Some(expired) = self.egress_delay_queue.next().await {
-            let delayed_msg = expired.into_inner();
-            send_normal(
-                delayed_msg.message.clone(),
-                delayed_msg.height,
-                delayed_msg.target.clone(),
-                delayed_msg.is_consensus,
-            ).await;
-            Some(delayed_msg)
-        } else {
-            None
-        }
-    }
-
-    // 通知工作线程异步状态变化
-    async fn notify_workers(&self) {
-        if let Some(ref sender) = self.worker_channel {
-            let partition_info = if self.current_effect == AsyncEffectType::Partition {
-                self.our_partition_nodes.clone()
-            } else {
-                HashSet::new()
-            };
-            
-            let _ = sender.send((self.is_active, partition_info)).await;
-        }
-    }
-
-    // 检查是否有待处理的效果
-    pub fn has_pending_effects(&self) -> bool {
-        !self.effect_configs.is_empty()
-    }
-
-    // 获取下一个效果的开始时间
-    pub fn next_effect_start_time(&self) -> Option<u64> {
-        self.effect_configs.front().map(|config| config.start_time)
-    }
-
-    // 检查当前效果是否应该结束
-    pub fn should_end_current_effect(&self) -> bool {
-        self.is_active && Instant::now() >= self.current_end_time
-    }
 }
 
 pub struct Core {
@@ -568,7 +208,6 @@ pub struct Core {
 
     
     // //Asynchrony simulation framework:
-    async_simulator: Option<AsyncEffectSimulator>,
     simulate_asynchrony: bool, //Simulating an async event
     asynchrony_type: VecDeque<AsyncEffectType>, //Type of effects: 0 for delay full async duration, 1 for partition, 2 for  failure, 3 for egress delay. Will start #type many blips.
     asynchrony_start: VecDeque<u64>,     //Start of async period   //offset from current time (in seconds) when to start next async effect
@@ -717,7 +356,6 @@ impl Core {
 
                 // partition_delayed_msgs: Vec::new(),
                 // partition_public_keys: HashSet::new(),
-                async_simulator: None,
                 simulate_asynchrony,
                 asynchrony_type: async_type.iter().map(|v| AsyncEffectType::from(*v)).collect(),
                 asynchrony_start,
@@ -752,21 +390,6 @@ impl Core {
             .run()
             .await;
         });
-    }
-
-    pub fn init_async_simulator(&mut self, configs: Vec<AsyncEffectConfig>) {
-        self.async_simulator = Some(AsyncEffectSimulator::new(
-            configs,
-            Some(self.tx_worker_async_channel.clone()),
-        ));
-    }
-
-    fn extract_slot_from_consensus(&self, consensus_msg: &crate::messages::ConsensusMessage) -> u64 {
-        match consensus_msg {
-            crate::messages::ConsensusMessage::Prepare { slot, .. } => *slot,
-            crate::messages::ConsensusMessage::Confirm { slot, .. } => *slot,
-            crate::messages::ConsensusMessage::Commit { slot, .. } => *slot,
-        }
     }
     
     async fn process_own_header(&mut self, mut header: Header) -> DagResult<()> {
@@ -2149,7 +1772,7 @@ impl Core {
                             }
                         }
                         
-                        if self.asynchrony_type[i] == AsyncEffectType::Egress {
+                        if self.asynchrony_type[i] == AsyncEffectType::Egress || self.asynchrony_type[i] == AsyncEffectType::PrepareDelay {
                             let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
                             keys.sort();
                             let index = keys.binary_search(&self.name).unwrap();
@@ -2732,219 +2355,126 @@ impl Core {
     }
 
     pub async fn send_msg(&mut self, message: PrimaryMessage, height: u64, author: Option<PublicKey>, consensus_handler: bool) {
-        // Check if there's an asynchronous simulator
-        if let Some(ref mut simulator) = self.async_simulator {
-            // Use reference counting to avoid lifetime issues
-            use std::sync::Arc;
-            use tokio::sync::Mutex;
-            
-            // Due to lifetime constraints, we need to use a different approach
-            // Handle asynchronous effects directly here instead of passing closures
-            
-            if !simulator.is_active {
+        // Fallback to original logic when no simulator
+        match self.current_effect_type {
+            AsyncEffectType::Off => {
+                debug!("message sent normally");
                 self.send_msg_normal(message, height, author, consensus_handler).await;
-                return;
             }
-    
-            match self.current_effect_type {
-                AsyncEffectType::Off => {
-                    self.send_msg_normal(message, height, author, consensus_handler).await;
-                }
-                
-                AsyncEffectType::TempBlip => {
-                    // Buffer all messages
-                    let delayed_msg = DelayedMessage {
-                        message,
-                        height,
-                        target: author,
-                        is_consensus: consensus_handler,
-                        scheduled_time: simulator.current_end_time,
-                    };
-                    simulator.temp_blip_buffer.push(delayed_msg);
-                }
-                
-                AsyncEffectType::Failure => {
-                    // Decide whether to drop based on message type
-                    if let PrimaryMessage::ConsensusMessage(ref consensus_msg) = message {
-                        // Extract slot value early to avoid borrowing conflicts
-                        let slot = match consensus_msg {
-                            crate::messages::ConsensusMessage::Prepare { slot, .. } => *slot,
-                            crate::messages::ConsensusMessage::Confirm { slot, .. } => *slot,
-                            crate::messages::ConsensusMessage::Commit { slot, .. } => *slot,
-                        };
-                        
-                        if simulator.failed_slots.is_empty() {
-                            // Record the first failed slot
-                            simulator.failed_slots.insert(slot);
-                            // Drop message (don't send)
-                            return;
-                        } else if simulator.failed_slots.contains(&slot) {
-                            // Continue dropping messages from the same slot
-                            return;
+            AsyncEffectType::TempBlip => {
+                // Keep original logic as fallback
+                match message {
+                    PrimaryMessage::ConsensusMessage(m) => {
+                        match m.clone() {
+                            ConsensusMessage::Prepare {slot, view, tc, qc_ticket: _, proposals} => {
+                                debug!("Simulating Asynchrony: skip sending Prepare for slot {} view {}. This will trigger a view change", slot, view);
+                                self.async_delayed_prepare = Some(m);
+                            }
+                            _ => {}
                         }
                     }
-                    // Send other messages normally
-                    self.send_msg_normal(message, height, author, consensus_handler).await;
+                    _ => { debug!("send all other messages")}
                 }
-                
-                AsyncEffectType::Partition => {
-                    match author {
-                        Some(target_node) => {
-                            if simulator.our_partition_nodes.contains(&target_node) {
-                                // Target is in our partition, send normally
-                                self.send_msg_normal(message, height, Some(target_node), consensus_handler).await;
-                            } else {
-                                // Target is in another partition, buffer message
-                                let delayed_msg = DelayedMessage {
-                                    message,
-                                    height,
-                                    target: Some(target_node),
-                                    is_consensus: consensus_handler,
-                                    scheduled_time: simulator.current_end_time,
-                                };
-                                simulator.partition_buffer.push(delayed_msg);
-                            }
-                        }
-                        None => {
-                            // Broadcast message: send to nodes in our partition
-                            let partition_nodes_count = simulator.our_partition_nodes.len();
-                            if partition_nodes_count > 1 {
-                                // Release simulator borrow early
-                                drop(simulator);
-                                self.send_msg_partition(&message, height, consensus_handler, true).await;
-                                // Re-acquire simulator borrow
-                                if let Some(ref mut simulator) = self.async_simulator {
-                                    // Buffer message for the other partition
-                                    let delayed_msg = DelayedMessage {
-                                        message,
-                                        height,
-                                        target: None,
-                                        is_consensus: consensus_handler,
-                                        scheduled_time: simulator.current_end_time,
-                                    };
-                                    simulator.partition_buffer.push(delayed_msg);
+                panic!("TempBlip currently deprecated");
+            }
+            AsyncEffectType::Failure => {
+                match message.clone() {
+                    PrimaryMessage::ConsensusMessage(m) => {
+                        match m.clone() {
+                            ConsensusMessage::Prepare {slot, view, tc, qc_ticket: _, proposals} => {
+                                self.async_delayed_prepare = Some(m);
+                                if self.dropped_slot > 0 {
+                                    self.send_msg_normal(message, height, author, consensus_handler).await;
+                                } else {
+                                    self.dropped_slot = slot;
+                                }                                
+                            },
+                            ConsensusMessage::Confirm { slot, view: _, qc: _, proposals: _ } => {
+                                if self.dropped_slot > 0 {
+                                    self.send_msg_normal(message, height, author, consensus_handler).await;
+                                } else {
+                                    self.dropped_slot = slot;
                                 }
-                            } else {
-                                // Buffer message for the other partition
-                                let delayed_msg = DelayedMessage {
-                                    message,
-                                    height,
-                                    target: None,
-                                    is_consensus: consensus_handler,
-                                    scheduled_time: simulator.current_end_time,
-                                };
-                                simulator.partition_buffer.push(delayed_msg);
+                            },
+                            ConsensusMessage::Commit { slot, view: _, qc: _, proposals: _ } => {
+                                if self.dropped_slot > 0 {
+                                    self.send_msg_normal(message, height, author, consensus_handler).await;
+                                } else {
+                                    self.dropped_slot = slot;
+                                }
                             }
                         }
                     }
+                    _ => { debug!("dropping all other messages") }
                 }
-                
-                AsyncEffectType::Egress => {
-                    // Calculate delayed send time
-                    let delay_time = Instant::now() + Duration::from_millis(self.egress_penalty); // Default 100ms delay
-                    let actual_send_time = delay_time.min(simulator.current_end_time);
-                    
-                    let delayed_msg = DelayedMessage {
-                        message,
-                        height,
-                        target: author,
-                        is_consensus: consensus_handler,
-                        scheduled_time: actual_send_time,
-                    };
-                    debug!("current time is {:?}", Instant::now());
-                    debug!("egress penalty is {:?}", self.egress_penalty);
-                    debug!("msg egress end time is {:?}", delay_time);
-                    debug!("msg actual send time is {:?}", actual_send_time);
-                    simulator.egress_delay_queue.insert_at(delayed_msg, actual_send_time);
+                debug!("dropping message");
+            }
+            AsyncEffectType::Partition => {
+                match author {
+                    Some(author) => {
+                        if self.partition_public_keys.contains(&author) {
+                            debug!("single message during partition, sent normally");
+                            self.send_msg_normal(message, height, Some(author), consensus_handler).await;
+                        } else {
+                            debug!("single message during partition, buffered");
+                            self.partition_delayed_msgs.push((message, height, Some(author), consensus_handler));
+                        }
+                    }
+                    None => {
+                        if self.partition_public_keys.len() > 1 {
+                            self.send_msg_partition(&message, height, consensus_handler, true).await;
+                            debug!("broadcast message during partition, sent to nodes in our partition");
+                        }
+                        self.partition_delayed_msgs.push((message, height, None, consensus_handler));
+                    }
                 }
             }
-        } else {
-            // Fallback to original logic when no simulator
-            match self.current_effect_type {
-                AsyncEffectType::Off => {
-                    debug!("message sent normally");
-                    self.send_msg_normal(message, height, author, consensus_handler).await;
-                }
-                AsyncEffectType::TempBlip => {
-                    // Keep original logic as fallback
-                    match message {
-                        PrimaryMessage::ConsensusMessage(m) => {
-                            match m.clone() {
-                                ConsensusMessage::Prepare {slot, view, tc, qc_ticket: _, proposals} => {
-                                    debug!("Simulating Asynchrony: skip sending Prepare for slot {} view {}. This will trigger a view change", slot, view);
-                                    self.async_delayed_prepare = Some(m);
-                                }
-                                _ => {}
+            AsyncEffectType::Egress => {
+                let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
+                debug!("current time is {:?}", Instant::now());
+                debug!("egress penalty is {:?}", self.egress_penalty);
+                debug!("msg egress end time is {:?}", egress_end_time);
+                let actual_send_time = egress_end_time.min(self.current_egress_end);
+                debug!("msg actual send time is {:?}", actual_send_time);
+                self.egress_delay_queue.insert_at((message, height, author, consensus_handler), actual_send_time);
+            }
+            AsyncEffectType::PrepareDelay => {
+                match message.clone() {
+                    PrimaryMessage::ConsensusMessage(m) => {
+                        match m.clone() {
+                            ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals: _} => {
+                                debug!("Simulating Prepare Delay: delay Prepare for slot {} view {}", slot, view);
+                                let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
+                                debug!("current time is {:?}", Instant::now());
+                                debug!("egress penalty is {:?}", self.egress_penalty);
+                                debug!("msg egress end time is {:?}", egress_end_time);
+                                let actual_send_time = egress_end_time.min(self.current_egress_end);
+                                debug!("msg actual send time is {:?}", actual_send_time);
+                                self.egress_delay_queue.insert_at((message, height, author, consensus_handler), actual_send_time);
                             }
-                        }
-                        _ => { debug!("send all other messages")}
-                    }
-                    panic!("TempBlip currently deprecated");
-                }
-                AsyncEffectType::Failure => {
-                    match message.clone() {
-                        PrimaryMessage::ConsensusMessage(m) => {
-                            match m.clone() {
-                                ConsensusMessage::Prepare {slot, view, tc, qc_ticket: _, proposals} => {
-                                    self.async_delayed_prepare = Some(m);
-                                    if self.dropped_slot > 0 {
-                                        self.send_msg_normal(message, height, author, consensus_handler).await;
-                                    } else {
-                                        self.dropped_slot = slot;
-                                    }                                
-                                },
-                                ConsensusMessage::Confirm { slot, view: _, qc: _, proposals: _ } => {
-                                    if self.dropped_slot > 0 {
-                                        self.send_msg_normal(message, height, author, consensus_handler).await;
-                                    } else {
-                                        self.dropped_slot = slot;
-                                    }
-                                },
-                                ConsensusMessage::Commit { slot, view: _, qc: _, proposals: _ } => {
-                                    if self.dropped_slot > 0 {
-                                        self.send_msg_normal(message, height, author, consensus_handler).await;
-                                    } else {
-                                        self.dropped_slot = slot;
-                                    }
-                                }
-                            }
-                        }
-                        _ => { debug!("dropping all other messages") }
-                    }
-                    debug!("dropping message");
-                }
-                AsyncEffectType::Partition => {
-                    match author {
-                        Some(author) => {
-                            if self.partition_public_keys.contains(&author) {
-                                debug!("single message during partition, sent normally");
-                                self.send_msg_normal(message, height, Some(author), consensus_handler).await;
-                            } else {
-                                debug!("single message during partition, buffered");
-                                self.partition_delayed_msgs.push((message, height, Some(author), consensus_handler));
-                            }
-                        }
-                        None => {
-                            if self.partition_public_keys.len() > 1 {
-                                self.send_msg_partition(&message, height, consensus_handler, true).await;
-                                debug!("broadcast message during partition, sent to nodes in our partition");
-                            }
-                            self.partition_delayed_msgs.push((message, height, None, consensus_handler));
+                            _ => {}
                         }
                     }
+                    PrimaryMessage::ConsensusRequest(m) => {
+                        match m.message.clone() {
+                            ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals: _} => {
+                                debug!("Simulating Prepare Delay: delay Prepare for slot {} view {}", slot, view);
+                                let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
+                                debug!("current time is {:?}", Instant::now());
+                                debug!("egress penalty is {:?}", self.egress_penalty);
+                                debug!("msg egress end time is {:?}", egress_end_time);
+                                let actual_send_time = egress_end_time.min(self.current_egress_end);
+                                debug!("msg actual send time is {:?}", actual_send_time);
+                                self.egress_delay_queue.insert_at((message, height, author, consensus_handler), actual_send_time);
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => { debug!("dropping all other messages") }
                 }
-                AsyncEffectType::Egress => {
-                    let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
-                    debug!("current time is {:?}", Instant::now());
-                    debug!("egress penalty is {:?}", self.egress_penalty);
-                    debug!("msg egress end time is {:?}", egress_end_time);
-                    let actual_send_time = egress_end_time.min(self.current_egress_end);
-                    debug!("msg actual send time is {:?}", actual_send_time);
-                    self.egress_delay_queue.insert_at((message, height, author, consensus_handler), actual_send_time);
-                }
-                _ => {
-                    panic!("not a valid effect")
-                }
+            }
+            _ => {
+                panic!("not a valid effect")
             }
         }
     }
