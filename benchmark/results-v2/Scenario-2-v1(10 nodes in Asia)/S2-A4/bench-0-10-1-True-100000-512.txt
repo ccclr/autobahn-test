@@ -1,0 +1,128 @@
+
+-----------------------------------------
+ SUMMARY:
+-----------------------------------------
+ + CONFIG:
+ Faults: 0 node(s)
+ Committee size: 10 node(s)
+ Worker(s) per node: 1 worker(s)
+ Collocate primary and workers: True
+ Input rate: 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000 tx/s
+ Transaction size: 512 B
+ Execution time: 60 s
+
+ Timeout delay: 1500 ms
+ Header size: 1000 B
+ Max header delay: 200 ms
+ GC depth: 50 round(s)
+ Sync retry delay: 10000 ms
+ Sync retry nodes: 4 node(s)
+ Batch size: 500000 B
+ Max batch delay: 200 ms
+ Use optimistic tips: True
+ Use parallel proposals: True
+ k: 3
+ Use fast path: True
+ Fast path timeout: 100 ms
+ Use ride share: False
+ Car timeout: 2000 ms
+ Simulate asynchrony: False
+ Asynchrony type: [3]
+ Asynchrony start: [10000]
+ Asynchrony duration: [20000]
+ Affected nodes: [2]
+ Egress penalty: 100 ms
+ Use fast sync: True
+ Use exponential timeouts: True
+ Cut Condition: 2
+
+ + HOTSPOT CONFIG:
+ Enable hotspot: True
+ Total transactions sent: 6096000
+ Aggregate throughput increase: 0.0%
+ Window 1: 20s-40s, 5 nodes, 40.0% increase
+ Node performances:
+ Node 0: base=10000,  actual=11394.2,  txs=686500
+ Node 1: base=10000,  actual=11396.5,  txs=685500
+ Node 2: base=10000,  actual=11364.7,  txs=699500
+ Node 3: base=10000,  actual=11375.9,  txs=694500
+ Node 4: base=10000,  actual=11372.5,  txs=696000
+ Node 5: base=10000,  actual=8624.1,  txs=526500
+ Node 6: base=10000,  actual=8626.3,  txs=527500
+ Node 7: base=10000,  actual=8625.2,  txs=527000
+ Node 8: base=10000,  actual=8617.3,  txs=523500
+ Node 9: base=10000,  actual=8630.8,  txs=529500
+
+ + RESULTS:
+ Consensus TPS: 99,522 tx/s
+ Consensus BPS: 50,955,037 B/s
+ Consensus latency: 217 ms
+
+ End-to-end TPS: 99,436 tx/s
+ End-to-end BPS: 50,911,189 B/s
+ End-to-end latency: 388 ms
+-----------------------------------------
+
+-----------------------------------------
+ SUMMARY:
+-----------------------------------------
+ + CONFIG:
+ Faults: 0 node(s)
+ Committee size: 10 node(s)
+ Worker(s) per node: 1 worker(s)
+ Collocate primary and workers: True
+ Input rate: 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000 tx/s
+ Transaction size: 512 B
+ Execution time: 60 s
+
+ Timeout delay: 1500 ms
+ Header size: 1000 B
+ Max header delay: 200 ms
+ GC depth: 50 round(s)
+ Sync retry delay: 10000 ms
+ Sync retry nodes: 4 node(s)
+ Batch size: 500000 B
+ Max batch delay: 200 ms
+ Use optimistic tips: True
+ Use parallel proposals: True
+ k: 3
+ Use fast path: True
+ Fast path timeout: 100 ms
+ Use ride share: False
+ Car timeout: 2000 ms
+ Simulate asynchrony: False
+ Asynchrony type: [3]
+ Asynchrony start: [10000]
+ Asynchrony duration: [20000]
+ Affected nodes: [2]
+ Egress penalty: 100 ms
+ Use fast sync: True
+ Use exponential timeouts: True
+ Cut Condition: 2
+
+ + HOTSPOT CONFIG:
+ Enable hotspot: True
+ Total transactions sent: 6099841
+ Aggregate throughput increase: 0.0%
+ Window 1: 20s-40s, 5 nodes, 40.0% increase
+ Node performances:
+ Node 0: base=10000,  actual=11393.0,  txs=687000
+ Node 1: base=10000,  actual=11391.9,  txs=687500
+ Node 2: base=10000,  actual=11371.4,  txs=696500
+ Node 3: base=10000,  actual=11377.0,  txs=694000
+ Node 4: base=10000,  actual=11369.2,  txs=697500
+ Node 5: base=10000,  actual=8630.8,  txs=529500
+ Node 6: base=10000,  actual=8628.6,  txs=528500
+ Node 7: base=10000,  actual=8618.4,  txs=524000
+ Node 8: base=10000,  actual=8630.8,  txs=529341
+ Node 9: base=10000,  actual=8623.0,  txs=526000
+
+ + RESULTS:
+ Consensus TPS: 99,819 tx/s
+ Consensus BPS: 51,107,328 B/s
+ Consensus latency: 203 ms
+
+ End-to-end TPS: 99,567 tx/s
+ End-to-end BPS: 50,978,277 B/s
+ End-to-end latency: 384 ms
+-----------------------------------------
