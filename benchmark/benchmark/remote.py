@@ -185,16 +185,17 @@ class Bench:
         Print.info(
             f'Updating {len(ips)} machines (branch "{self.settings.branch}")...'
         )
+
         cmd = [
-            f'(cd {self.settings.repo_name} && git fetch -f)',
-            f'(cd {self.settings.repo_name} && git checkout -f {self.settings.branch})',
-            f'(cd {self.settings.repo_name} && git pull -f)',
+            f'(cd {self.settings.repo_name} && git fetch origin {self.settings.branch})',
+            f'(cd {self.settings.repo_name} && git reset --hard origin/{self.settings.branch})',
             'source $HOME/.cargo/env',
             f'(cd {self.settings.repo_name}/node && {CommandMaker.compile()})',
             CommandMaker.alias_binaries(
                 f'./{self.settings.repo_name}/target/release/'
             )
         ]
+
         g = Group(*ips, user=self.settings.username, connect_kwargs=self.connect)
         g.run(' && '.join(cmd), hide=True)
 
