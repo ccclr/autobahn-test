@@ -49,6 +49,7 @@ pub enum AsyncEffectType {
     Partition = 3, //Send nothing to partitioned replicas for x seconds, then release all
     Egress = 4,  //For x seconds, delay all outbound messages by some amount
     PrepareDelay = 5, //For x seconds, delay all Prepare messages by some amount
+    VoteDelay = 6, //For x seconds, delay all Vote messages by some amount
 }
 
 impl From<u8> for AsyncEffectType {
@@ -60,6 +61,7 @@ impl From<u8> for AsyncEffectType {
             3 => AsyncEffectType::Partition,
             4 => AsyncEffectType::Egress,
             5 => AsyncEffectType::PrepareDelay,
+            6 => AsyncEffectType::VoteDelay,
             _ => AsyncEffectType::Off,
         }
     }
@@ -980,6 +982,7 @@ impl Core {
                         //Alternatively could modify QCMaker such that it wipes the QC after first use
 
                 let fast_timer = FastTimer::new(vote.clone(), self.fast_path_timeout);
+                debug!("Fast path timer start");
                 self.fast_timer_futures.push(Box::pin(fast_timer));
                 //self.timers.insert((tc.slot, tc.view + 1));
             }
@@ -1772,7 +1775,7 @@ impl Core {
                             }
                         }
                         
-                        if self.asynchrony_type[i] == AsyncEffectType::Egress || self.asynchrony_type[i] == AsyncEffectType::PrepareDelay {
+                        if self.asynchrony_type[i] == AsyncEffectType::Egress || self.asynchrony_type[i] == AsyncEffectType::PrepareDelay || self.asynchrony_type[i] == AsyncEffectType::VoteDelay {
                             let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
                             keys.sort();
                             let index = keys.binary_search(&self.name).unwrap();
@@ -2377,6 +2380,7 @@ impl Core {
                 }
                 panic!("TempBlip currently deprecated");
             }
+
             AsyncEffectType::Failure => {
                 match message.clone() {
                     PrimaryMessage::ConsensusMessage(m) => {
@@ -2437,7 +2441,56 @@ impl Core {
                 let actual_send_time = egress_end_time.min(self.current_egress_end);
                 debug!("msg actual send time is {:?}", actual_send_time);
                 self.egress_delay_queue.insert_at((message, height, author, consensus_handler), actual_send_time);
+                
+                // Log message type for debugging
+                // match message.clone() {
+                //     PrimaryMessage::ConsensusVote(m) => {
+                //         let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
+                //         debug!("current time is {:?}", Instant::now());
+                //         debug!("egress penalty is {:?}", self.egress_penalty);
+                //         debug!("msg egress end time is {:?}", egress_end_time);
+                //         let actual_send_time = egress_end_time.min(self.current_egress_end);
+                //         debug!("msg actual send time is {:?}", actual_send_time);
+                //         debug!("Egress: delaying Consensus Vote");
+                //         self.egress_delay_queue.insert_at((message, height, author, consensus_handler), actual_send_time);
+                //     },
+                //     PrimaryMessage::ConsensusMessage(m) => {
+                //         match m.clone() {
+                //             ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals: _} => {
+                //                 debug!("Egress: delaying Prepare for slot {} view {}", slot, view);
+                //             },
+                //             ConsensusMessage::Confirm {slot, view, qc: _, proposals: _} => {
+                //                 debug!("Egress: delaying Confirm for slot {} view {}", slot, view);
+                //             },
+                //             ConsensusMessage::Commit {slot, view, qc: _, proposals: _} => {
+                //                 debug!("Egress: delaying Commit for slot {} view {}", slot, view);
+                //             }
+                //             _ => {}
+                //         }
+                //     }
+                //     PrimaryMessage::ConsensusRequest(m) => {
+                //         match m.message.clone() {
+                            
+                //             ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals: _} => {
+                //                 debug!("Egress: delaying Prepare request for slot {} view {}", slot, view);
+                //             },
+                //             ConsensusMessage::Confirm {slot, view, qc: _, proposals: _} => {
+                //                 debug!("Egress: delaying Confirm request for slot {} view {}", slot, view);
+                //             },
+                //             ConsensusMessage::Commit {slot, view, qc: _, proposals: _} => {
+                //                 debug!("Egress: delaying Commit request for slot {} view {}", slot, view);
+                //             }
+                //             _ => {}
+                //         }
+                //     }
+                    // _ => {
+                    //     debug!("Egress: delaying other message type");
+                    // }
+                // }
+                
+                
             }
+
             AsyncEffectType::PrepareDelay => {
                 match message.clone() {
                     PrimaryMessage::ConsensusMessage(m) => {
@@ -2470,7 +2523,35 @@ impl Core {
                             _ => {}
                         }
                     }
-                    _ => { debug!("dropping all other messages") }
+                    _ => { 
+                        debug!("Simulating Prepare Delay: sending message normally");
+                        self.send_msg_normal(message, height, author, consensus_handler).await; 
+                    }
+                }
+            }
+
+            AsyncEffectType::VoteDelay => {
+                match message.clone() {
+                    PrimaryMessage::ConsensusVote(m) => {
+                        match m.clone() {
+                            ConsensusVote{author: _, slot, digest, sig: _} => {
+                                
+                            },  
+                            _ => {}
+                        }
+                        debug!("Simulating Vote Delay: delay Vote");
+                        let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
+                        debug!("current time is {:?}", Instant::now());
+                        debug!("egress penalty is {:?}", self.egress_penalty);
+                        debug!("msg egress end time is {:?}", egress_end_time);
+                        let actual_send_time = egress_end_time.min(self.current_egress_end);
+                        debug!("msg actual send time is {:?}", actual_send_time);
+                        self.egress_delay_queue.insert_at((message, height, author, consensus_handler), actual_send_time);
+                    }
+                    _ => { 
+                        debug!("Simulating Vote Delay: sending message normally");
+                        self.send_msg_normal(message, height, author, consensus_handler).await;
+                    }
                 }
             }
             _ => {
@@ -2661,7 +2742,11 @@ impl Core {
                 Some(vote) = self.car_timer_futures.next() => self.process_vote(vote, true).await,
 
                 //Fast path loopback for external consensus
-                Some(vote) = self.fast_timer_futures.next() => self.process_consensus_vote(vote, true).await,
+                Some(vote) = self.fast_timer_futures.next() => {
+                    debug!("Fast path timer expired");
+                    self.process_consensus_vote(vote, true).await;
+                    Ok(())
+                }
 
                 // Payload timers
                 Some(header) = self.payload_timer_futures.next() => {
