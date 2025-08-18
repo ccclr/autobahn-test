@@ -21,7 +21,7 @@ def local(ctx, debug=True):
     ''' Run benchmarks on localhost '''
     bench_params = {
         'faults': 0, 
-        'nodes': 10,
+        'nodes': 4,
         'workers': 1,
         'rate': 10000,
         'tx_size': 512,
@@ -57,11 +57,11 @@ def local(ctx, debug=True):
         'cut_condition_type': 4,
 
         'simulate_asynchrony': True,
-        'asynchrony_type': [5],
+        'asynchrony_type': [6],
 
         'asynchrony_start': [10], #ms
         'asynchrony_duration': [40_000], #ms
-        'affected_nodes': [3],
+        'affected_nodes': [1],
         'egress_penalty': 100, #ms
 
         'use_fast_sync': True,
@@ -137,13 +137,13 @@ def remote(ctx, debug=True):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
-        'nodes': [10],
+        'nodes': [4],
         'workers': 1,
         'collocate': True,
         # 'rate': [170_000, 160_000],
         'rate': [100_000],
         'tx_size': 512,
-        'duration': 120,
+        'duration': 60,
         'runs': 2,
 
         # Unused
@@ -153,8 +153,8 @@ def remote(ctx, debug=True):
         'partition_nodes': 2,
         
         'enable_hotspot': True,
-        'hotspot_windows':[[0, 120]],
-        'hotspot_nodes': [5],
+        'hotspot_windows':[[0, 60]],
+        'hotspot_nodes': [4],
         'hotspot_rates': [0],
     }
     node_params = {
@@ -170,7 +170,7 @@ def remote(ctx, debug=True):
         'use_parallel_proposals': True,
         'k': 1,
         'use_fast_path': True,
-        'fast_path_timeout': 100,
+        'fast_path_timeout': 80,
         'use_ride_share': False,
         'car_timeout': 2000,
         'cut_condition_type': 4,
@@ -178,9 +178,9 @@ def remote(ctx, debug=True):
         'simulate_asynchrony': True,
         'asynchrony_type': [6],
 
-        'asynchrony_start': [30_000], #ms
-        'asynchrony_duration': [90_000], #ms
-        'affected_nodes': [3],
+        'asynchrony_start': [10_000], #ms
+        'asynchrony_duration': [50_000], #ms
+        'affected_nodes': [1],
         'egress_penalty': 100, #ms
 
         'use_fast_sync': True,
