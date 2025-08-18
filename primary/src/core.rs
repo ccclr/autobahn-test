@@ -2537,6 +2537,7 @@ impl Core {
                         let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
                         let actual_send_time = egress_end_time.min(self.current_egress_end);
                         self.egress_delay_queue.insert_at((message, height, author, consensus_handler), actual_send_time);
+                        return;
                     }
                     _ => { 
                         debug!("Simulating Vote Delay: sending message normally");
