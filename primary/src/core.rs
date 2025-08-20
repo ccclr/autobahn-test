@@ -246,6 +246,7 @@ pub struct Core {
     payload_timer_futures: FuturesUnordered<Pin<Box<dyn Future<Output = Header> + Send>>>,
     // Missed payloads
     missed_payloads: u64,
+    target_ip_addresses: VecDeque<String>,
 }
 
 impl Core {
@@ -287,6 +288,7 @@ impl Core {
         egress_penalty: u64,
         use_expoential_timeouts: bool,
         tx_worker_async_channel: Sender<(bool, HashSet<PublicKey>)>,
+        target_ip_addresses: VecDeque<String>,
     ) {
         tokio::spawn(async move {
             Self {
@@ -388,6 +390,7 @@ impl Core {
                 tx_worker_async_channel,
                 payload_timer_futures: FuturesUnordered::new(),
                 missed_payloads: 0,
+                target_ip_addresses,
             }
             .run()
             .await;
@@ -1775,12 +1778,28 @@ impl Core {
                             }
                         }
                         
-                        if self.asynchrony_type[i] == AsyncEffectType::Egress || self.asynchrony_type[i] == AsyncEffectType::PrepareDelay || self.asynchrony_type[i] == AsyncEffectType::VoteDelay {
+                        if self.asynchrony_type[i] == AsyncEffectType::Egress || self.asynchrony_type[i] == AsyncEffectType::PrepareDelay{
                             let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
                             keys.sort();
                             let index = keys.binary_search(&self.name).unwrap();
                             // Skip nodes that are not affected by the asynchrony
                             if index >= self.affected_nodes[i] as usize {
+                                continue;
+                            }
+                        }
+
+                        if self.asynchrony_type[i] == AsyncEffectType::VoteDelay {
+                            let my_ip = if let Ok(primary_addrs) = self.committee.primary(&self.name) {
+                                primary_addrs.primary_to_primary.ip().to_string()
+                            } else {
+                                "unknown".to_string()
+                            };
+                            let target_ip = self.target_ip_addresses.get(i).cloned().unwrap_or_default();
+                            debug!("my_ip is {:?}, target_ip is {:?}", my_ip, target_ip);
+                            if my_ip == target_ip {
+                                debug!("Node with IP {} will experience VoteDelay", my_ip);
+                            } else {
+                                debug!("Node with IP {} will NOT experience VoteDelay", my_ip);
                                 continue;
                             }
                         }
@@ -2381,38 +2400,61 @@ impl Core {
                 panic!("TempBlip currently deprecated");
             }
 
+            // AsyncEffectType::Failure => {
+            //     match message.clone() {
+            //         PrimaryMessage::ConsensusMessage(m) => {
+            //             match m.clone() {
+            //                 ConsensusMessage::Prepare {slot, view, tc, qc_ticket: _, proposals} => {
+            //                     self.async_delayed_prepare = Some(m);
+            //                     if self.dropped_slot > 0 {
+            //                         self.send_msg_normal(message, height, author, consensus_handler).await;
+            //                     } else {
+            //                         self.dropped_slot = slot;
+            //                     }                                
+            //                 },
+            //                 ConsensusMessage::Confirm { slot, view: _, qc: _, proposals: _ } => {
+            //                     if self.dropped_slot > 0 {
+            //                         self.send_msg_normal(message, height, author, consensus_handler).await;
+            //                     } else {
+            //                         self.dropped_slot = slot;
+            //                     }
+            //                 },
+            //                 ConsensusMessage::Commit { slot, view: _, qc: _, proposals: _ } => {
+            //                     if self.dropped_slot > 0 {
+            //                         self.send_msg_normal(message, height, author, consensus_handler).await;
+            //                     } else {
+            //                         self.dropped_slot = slot;
+            //                     }
+            //                 }
+            //             }
+            //         }
+            //         _ => { debug!("dropping all other messages") }
+            //     }
+            //     debug!("dropping message");
+            // }
+
             AsyncEffectType::Failure => {
                 match message.clone() {
                     PrimaryMessage::ConsensusMessage(m) => {
                         match m.clone() {
                             ConsensusMessage::Prepare {slot, view, tc, qc_ticket: _, proposals} => {
-                                self.async_delayed_prepare = Some(m);
-                                if self.dropped_slot > 0 {
-                                    self.send_msg_normal(message, height, author, consensus_handler).await;
-                                } else {
-                                    self.dropped_slot = slot;
-                                }                                
+                                debug!("dropping Prepare for slot {} view {}", slot, view);                               
                             },
-                            ConsensusMessage::Confirm { slot, view: _, qc: _, proposals: _ } => {
-                                if self.dropped_slot > 0 {
-                                    self.send_msg_normal(message, height, author, consensus_handler).await;
-                                } else {
-                                    self.dropped_slot = slot;
-                                }
+                            ConsensusMessage::Confirm { slot, view, qc: _, proposals: _ } => {
+                                debug!("dropping Confirm for slot {} view {}", slot, view);  
                             },
-                            ConsensusMessage::Commit { slot, view: _, qc: _, proposals: _ } => {
-                                if self.dropped_slot > 0 {
-                                    self.send_msg_normal(message, height, author, consensus_handler).await;
-                                } else {
-                                    self.dropped_slot = slot;
-                                }
+                            ConsensusMessage::Commit { slot, view, qc: _, proposals: _ } => {
+                                debug!("dropping Commit for slot {} view {}", slot, view);
                             }
                         }
                     }
-                    _ => { debug!("dropping all other messages") }
+                    _ => { self.send_msg_normal(message, height, author, consensus_handler).await; }
                 }
                 debug!("dropping message");
             }
+
+
+            
             AsyncEffectType::Partition => {
                 match author {
                     Some(author) => {
@@ -2532,17 +2574,36 @@ impl Core {
 
             AsyncEffectType::VoteDelay => {
                 if let PrimaryMessage::ConsensusVote(_) = &message {
-                    debug!("Simulating Vote Delay: delay Vote");
-                    let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
-                    debug!("current time is {:?}", Instant::now());
-                    debug!("egress penalty is {:?}", self.egress_penalty);
-                    debug!("msg egress end time is {:?}", egress_end_time);
-                    self.egress_delay_queue.insert_at((message, height, author, consensus_handler), egress_end_time);
+                    // debug!("Simulating Vote Delay: delay Vote");
+                    // let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
+                    // debug!("current time is {:?}", Instant::now());
+                    // debug!("egress penalty is {:?}", self.egress_penalty);
+                    // debug!("msg egress end time is {:?}", egress_end_time);
+                    // self.egress_delay_queue.insert_at((message, height, author, consensus_handler), egress_end_time);
+                    let should_delay = if let Some(author) = author {
+                        if let Ok(primary_addrs) = self.committee.primary(&author) {
+                            let target_ip = primary_addrs.primary_to_primary.ip().to_string();
+                            self.target_ip_addresses.contains(&target_ip)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    
+                    if should_delay {
+                        debug!("Simulating IP-based Vote Delay: delay Vote for IP");
+                        let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
+                        self.egress_delay_queue.insert_at((message, height, author, consensus_handler), egress_end_time);
+                    } else {
+                        debug!("Simulating IP-based Vote Delay: sending message normally");
+                        self.send_msg_normal(message, height, author, consensus_handler).await;
+                    }
                 } else {
                     debug!("Simulating Vote Delay: sending message normally");
                     self.send_msg_normal(message, height, author, consensus_handler).await;
                 }
-                return; // 确保函数在这里结束
+                return; 
             }
 
             _ => {

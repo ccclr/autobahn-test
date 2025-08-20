@@ -54,13 +54,13 @@ def local(ctx, debug=True):
         'fast_path_timeout': 200,
         'use_ride_share': True,
         'car_timeout': 2000,
-        'cut_condition_type': 4,
+        'cut_condition_type': 3,
 
         'simulate_asynchrony': True,
         'asynchrony_type': [6],
 
         'asynchrony_start': [10], #ms
-        'asynchrony_duration': [40_000], #ms
+        'asynchrony_duration': [10_000], #ms
         'affected_nodes': [1],
         'egress_penalty': 100, #ms
 
@@ -141,10 +141,10 @@ def remote(ctx, debug=True):
         'workers': 1,
         'collocate': True,
         # 'rate': [170_000, 160_000],
-        'rate': [50_000],
+        'rate': [40_000],
         'tx_size': 512,
         'duration': 60,
-        'runs': 2,
+        'runs': 1,
 
         # Unused
         'simulate_partition': False,
@@ -152,14 +152,14 @@ def remote(ctx, debug=True):
         'partition_duration': 5,
         'partition_nodes': 2,
         
-        'enable_hotspot': True,
+        'enable_hotspot': False,
         'hotspot_windows':[[0, 60]],
         'hotspot_nodes': [4],
         'hotspot_rates': [0],
     }
     node_params = {
-        'timeout_delay': 1500,  # ms
-        'header_size': 1000,  # bytes
+        'timeout_delay': 2500,  # ms
+        'header_size': 32,  # bytes
         'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
@@ -170,18 +170,18 @@ def remote(ctx, debug=True):
         'use_parallel_proposals': True,
         'k': 1,
         'use_fast_path': True,
-        'fast_path_timeout': 80,
+        'fast_path_timeout': 30,
         'use_ride_share': False,
         'car_timeout': 2000,
-        'cut_condition_type': 4,
+        'cut_condition_type': 3,
 
         'simulate_asynchrony': True,
         'asynchrony_type': [6],
 
-        'asynchrony_start': [10_000], #ms
-        'asynchrony_duration': [50_000], #ms
+        'asynchrony_start': [10], #ms
+        'asynchrony_duration': [60_000], #ms
         'affected_nodes': [1],
-        'egress_penalty': 100, #ms
+        'egress_penalty': 200, #ms
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,
@@ -244,7 +244,6 @@ def latency(ctx):
     manager = InstanceManager.make()
     settings = manager.settings
 
-    # 加载 SSH 私钥
     try:
         ctx.connect_kwargs.pkey = RSAKey.from_private_key_file("/home/ccclr0302/.ssh/google_compute_engine")
         connect_kwargs = ctx.connect_kwargs
@@ -252,7 +251,6 @@ def latency(ctx):
         Print.error(f"Failed to load SSH key: {e}")
         return
 
-    # 获取 hosts
     hosts_dict = manager.hosts()
     region_nodes = []
 
@@ -260,13 +258,13 @@ def latency(ctx):
         if len(nodes) >= 2:
             region_nodes.append((region, nodes[0], nodes[1]))  # (region, node1, node2)
         else:
+            region_nodes.append((region, nodes[0], nodes[0]))
             Print.warn(f"[Skip] Region {region} has <2 nodes.")
 
     m = len(region_nodes)
     latency_matrix = np.zeros((m, m))
     region_names = [r[0] for r in region_nodes]
 
-    # SSH latency 函数
     def ssh_latency(src, dst, repeat=3):
         if src == dst:
             return 0.0
@@ -289,6 +287,9 @@ def latency(ctx):
     # 1. Intra-region latency
     for i in range(m):
         region, node1, node2 = region_nodes[i]
+        if node1 == node2:
+            latency_matrix[i][i] = 0;
+            continue;
         latency = ssh_latency(node1, node2)
         latency_matrix[i][i] = latency / 2 if latency else np.nan
         print(f"[Intra] {region} ({node1} → {node2}): {latency_matrix[i][i]:.2f} ms")
