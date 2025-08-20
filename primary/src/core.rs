@@ -2574,31 +2574,31 @@ impl Core {
 
             AsyncEffectType::VoteDelay => {
                 if let PrimaryMessage::ConsensusVote(_) = &message {
-                    // debug!("Simulating Vote Delay: delay Vote");
-                    // let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
-                    // debug!("current time is {:?}", Instant::now());
-                    // debug!("egress penalty is {:?}", self.egress_penalty);
-                    // debug!("msg egress end time is {:?}", egress_end_time);
-                    // self.egress_delay_queue.insert_at((message, height, author, consensus_handler), egress_end_time);
-                    let should_delay = if let Some(author) = author {
-                        if let Ok(primary_addrs) = self.committee.primary(&author) {
-                            let target_ip = primary_addrs.primary_to_primary.ip().to_string();
-                            self.target_ip_addresses.contains(&target_ip)
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
+                    debug!("Simulating Vote Delay: delay Vote");
+                    let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
+                    debug!("current time is {:?}", Instant::now());
+                    debug!("egress penalty is {:?}", self.egress_penalty);
+                    debug!("msg egress end time is {:?}", egress_end_time);
+                    self.egress_delay_queue.insert_at((message, height, author, consensus_handler), egress_end_time);
+                    // let should_delay = if let Some(author) = author {
+                    //     if let Ok(primary_addrs) = self.committee.primary(&author) {
+                    //         let target_ip = primary_addrs.primary_to_primary.ip().to_string();
+                    //         self.target_ip_addresses.contains(&target_ip)
+                    //     } else {
+                    //         false
+                    //     }
+                    // } else {
+                    //     false
+                    // };
                     
-                    if should_delay {
-                        debug!("Simulating IP-based Vote Delay: delay Vote for IP");
-                        let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
-                        self.egress_delay_queue.insert_at((message, height, author, consensus_handler), egress_end_time);
-                    } else {
-                        debug!("Simulating IP-based Vote Delay: sending message normally");
-                        self.send_msg_normal(message, height, author, consensus_handler).await;
-                    }
+                    // if should_delay {
+                    //     debug!("Simulating IP-based Vote Delay: delay Vote for IP");
+                    //     let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
+                    //     self.egress_delay_queue.insert_at((message, height, author, consensus_handler), egress_end_time);
+                    // } else {
+                    //     debug!("Simulating IP-based Vote Delay: sending message normally");
+                    //     self.send_msg_normal(message, height, author, consensus_handler).await;
+                    // }
                 } else {
                     debug!("Simulating Vote Delay: sending message normally");
                     self.send_msg_normal(message, height, author, consensus_handler).await;

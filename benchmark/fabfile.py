@@ -170,7 +170,7 @@ def remote(ctx, debug=True):
         'use_parallel_proposals': True,
         'k': 1,
         'use_fast_path': True,
-        'fast_path_timeout': 30,
+        'fast_path_timeout': 200,
         'use_ride_share': False,
         'car_timeout': 2000,
         'cut_condition_type': 3,
@@ -178,10 +178,10 @@ def remote(ctx, debug=True):
         'simulate_asynchrony': True,
         'asynchrony_type': [6],
 
-        'asynchrony_start': [10], #ms
+        'asynchrony_start': [0], #ms
         'asynchrony_duration': [60_000], #ms
         'affected_nodes': [1],
-        'egress_penalty': 200, #ms
+        'egress_penalty': 600, #ms
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,
