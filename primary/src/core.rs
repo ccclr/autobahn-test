@@ -695,6 +695,7 @@ impl Core {
     #[async_recursion]
     async fn process_vote(&mut self, vote: Vote, is_loopback: bool) -> DagResult<()> {
         debug!("Processing Vote {:?}", vote);
+        
 
         // NOTE: If sending externally then need map of open consensus instances
 
@@ -764,7 +765,7 @@ impl Core {
 
             //Configure qc_maker to try to use Fast Path
             qc_maker.try_fast = match current_instance {
-                ConsensusMessage::Prepare {slot: _, view: _, tc: _, qc_ticket: _, proposals: _, } => self.use_fast_path,  //Only PrepareQC should try to compute a FastQC
+                ConsensusMessage::Prepare {slot: _, view: _, tc: _, qc_ticket: _, proposals: _, } => self.use_fast_path && !qc_maker.fast_path_disabled,  //Only PrepareQC should try to compute a FastQC
                 _ => false,
             };
 
@@ -780,6 +781,7 @@ impl Core {
                 false => qc_maker.append(vote.author, (digest.clone(), sig.clone()), &self.committee)?,
                 true => {
                     qc_maker.try_fast = false; //turn back to normal path handling
+                    qc_maker.fast_path_disabled = true;
                     qc_maker.get_qc()?
                 }
             };
@@ -821,6 +823,11 @@ impl Core {
                     match current_instance {
                         ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals,} 
                         => {
+                            if qc_maker.fast_path_disabled {
+                                debug!("Fast path disabled");
+                                return Ok(());
+                            }
+                            
                             debug!("Prepare QC formed in slot {:?}", slot);
                             debug!("Prepare has slot: {}, view: {}, digest: {}", slot, view, current_instance.digest());
 
@@ -933,7 +940,6 @@ impl Core {
 
      //TODO: Then work on Process Vote //TODO: Add a function: SendConsensus
     async fn process_consensus_vote(&mut self, vote: ConsensusVote, is_loopback: bool) -> DagResult<()> {
-
         debug!("Receive consensus vote for dig {}", &vote.digest);
 
         let opt_curr_instance = self.consensus_instances.get(&(vote.slot, vote.digest.clone()));
@@ -955,7 +961,7 @@ impl Core {
     
         //Configure qc_maker to try to use Fast Path
         qc_maker.try_fast = match current_instance {
-            ConsensusMessage::Prepare {slot: _, view: _, tc: _, qc_ticket: _, proposals: _, } => self.use_fast_path,  //Only PrepareQC should try to compute a FastQC
+            ConsensusMessage::Prepare {slot: _, view: _, tc: _, qc_ticket: _, proposals: _, } => self.use_fast_path && !qc_maker.fast_path_disabled,  //Only PrepareQC should try to compute a FastQC
             _ => false,
         };
  
@@ -969,13 +975,14 @@ impl Core {
             false => qc_maker.append(vote.author, (vote.digest.clone(), vote.sig.clone()), &self.committee)?,
             true => {
                 qc_maker.try_fast = false; //turn back to normal path handling
+                qc_maker.fast_path_disabled = true;
                 qc_maker.get_qc()?
             }
         };
 
         debug!("qc maker weight {:?}", qc_maker.votes.len());
 
-        if qc_ready {
+        if qc_ready {            
             if qc_opt.is_none() && self.use_fast_path {
                 // Slow QC is available but we should wait for Fast
                 //Start timer for Fast:
@@ -992,16 +999,20 @@ impl Core {
 
             else if let Some(qc) = qc_opt { //If QC = some (i.e. FastPathQC succeed, or SlowPathQC suceed if running without FP)
                 //println!("QC formed");
-            
                 match current_instance {
                     ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals,} 
                     => {
+                        if qc_maker.fast_path_disabled {
+                            debug!("Fast path disabled");
+                            return Ok(());
+                        }
+                        
                         debug!("Prepare QC formed in slot {:?}", slot);
                         debug!("Prepare has slot: {}, view: {}, digest: {}", slot, view, current_instance.digest());
 
                         let new_consensus_message = match qc_maker.try_fast {
                             true => {
-                                debug!("taking fast path!");
+                                debug!("taking fast path for slot {:?}", slot);
                                 ConsensusMessage::Commit {slot: *slot, view: *view,  qc, proposals: proposals.clone() }
                                 }, // Create Commit if we have FastPrepareQC
                             false => ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: proposals.clone() },
@@ -1789,17 +1800,24 @@ impl Core {
                         }
 
                         if self.asynchrony_type[i] == AsyncEffectType::VoteDelay {
-                            let my_ip = if let Ok(primary_addrs) = self.committee.primary(&self.name) {
-                                primary_addrs.primary_to_primary.ip().to_string()
-                            } else {
-                                "unknown".to_string()
-                            };
-                            let target_ip = self.target_ip_addresses.get(i).cloned().unwrap_or_default();
-                            debug!("my_ip is {:?}, target_ip is {:?}", my_ip, target_ip);
-                            if my_ip == target_ip {
-                                debug!("Node with IP {} will experience VoteDelay", my_ip);
-                            } else {
-                                debug!("Node with IP {} will NOT experience VoteDelay", my_ip);
+                            // let my_ip = if let Ok(primary_addrs) = self.committee.primary(&self.name) {
+                            //     primary_addrs.primary_to_primary.ip().to_string()
+                            // } else {
+                            //     "unknown".to_string()
+                            // };
+                            // let target_ip = self.target_ip_addresses.get(i).cloned().unwrap_or_default();
+                            // debug!("my_ip is {:?}, target_ip is {:?}", my_ip, target_ip);
+                            // if my_ip == target_ip {
+                            //     debug!("Node with IP {} will experience VoteDelay", my_ip);
+                            // } else {
+                            //     debug!("Node with IP {} will NOT experience VoteDelay", my_ip);
+                            //     continue;
+                            // }
+                            let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
+                            keys.sort();
+                            let index = keys.binary_search(&self.name).unwrap();
+                            // Skip nodes that are not affected by the asynchrony
+                            if index >= self.affected_nodes[i] as usize {
                                 continue;
                             }
                         }
