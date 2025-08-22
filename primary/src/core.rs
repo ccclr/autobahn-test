@@ -247,6 +247,7 @@ pub struct Core {
     // Missed payloads
     missed_payloads: u64,
     target_ip_addresses: VecDeque<String>,
+
 }
 
 impl Core {
@@ -823,10 +824,7 @@ impl Core {
                     match current_instance {
                         ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals,} 
                         => {
-                            if qc_maker.fast_path_disabled {
-                                debug!("Fast path disabled");
-                                return Ok(());
-                            }
+                            
                             
                             debug!("Prepare QC formed in slot {:?}", slot);
                             debug!("Prepare has slot: {}, view: {}, digest: {}", slot, view, current_instance.digest());
@@ -961,7 +959,10 @@ impl Core {
     
         //Configure qc_maker to try to use Fast Path
         qc_maker.try_fast = match current_instance {
-            ConsensusMessage::Prepare {slot: _, view: _, tc: _, qc_ticket: _, proposals: _, } => self.use_fast_path && !qc_maker.fast_path_disabled,  //Only PrepareQC should try to compute a FastQC
+            ConsensusMessage::Prepare {slot: _, view: _, tc: _, qc_ticket: _, proposals: _, } => {
+                debug!("qc_maker.fast_path_disabled {:?}", qc_maker.fast_path_disabled);
+                self.use_fast_path && !qc_maker.fast_path_disabled  //Only PrepareQC should try to compute a FastQC
+            },
             _ => false,
         };
  
@@ -979,6 +980,11 @@ impl Core {
                 qc_maker.get_qc()?
             }
         };
+
+        debug!("qc_maker.try_fast {:?}", qc_maker.try_fast);
+        debug!("qc_ready {:?}", qc_ready);
+        debug!("qc_opt {:?}", qc_opt);
+
 
         debug!("qc maker weight {:?}", qc_maker.votes.len());
 
@@ -1002,25 +1008,35 @@ impl Core {
                 match current_instance {
                     ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals,} 
                     => {
-                        if qc_maker.fast_path_disabled {
-                            debug!("Fast path disabled");
-                            return Ok(());
-                        }
+                        // if qc_maker.fast_path_disabled {
+                        //     debug!("Fast path disabled");
+                        //     return Ok(());
+                        // }
                         
                         debug!("Prepare QC formed in slot {:?}", slot);
                         debug!("Prepare has slot: {}, view: {}, digest: {}", slot, view, current_instance.digest());
 
-                        let new_consensus_message = match qc_maker.try_fast {
+                        match qc_maker.try_fast {
                             true => {
                                 debug!("taking fast path for slot {:?}", slot);
-                                ConsensusMessage::Commit {slot: *slot, view: *view,  qc, proposals: proposals.clone() }
+                                let new_consensus_message = ConsensusMessage::Commit {slot: *slot, view: *view,  qc, proposals: proposals.clone() };
+                                self.send_consensus_req(new_consensus_message).await?;
                                 }, // Create Commit if we have FastPrepareQC
-                            false => ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: proposals.clone() },
+                            false => {
+                                let sent_confirm = qc_maker.sent_confirm.clone();
+                                let completed_fast = qc_maker.completed_fast;
+                                if !sent_confirm && !completed_fast {
+                                    debug!("sending confirm for slot {:?} with qc {:?}", slot, qc);
+                                    let new_consensus_message = ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: proposals.clone() };
+                                    qc_maker.sent_confirm = true;
+                                    self.send_consensus_req(new_consensus_message).await?;
+                                }
+                            }
                         };
                         //let new_consensus_message = ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: new_proposals,};
 
                         // continue with next consensus phase
-                        self.send_consensus_req(new_consensus_message).await?;
+                        
                     }
                     ConsensusMessage::Confirm {slot, view, qc: _,proposals,}
                     => {

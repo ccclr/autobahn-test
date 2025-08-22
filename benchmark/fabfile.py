@@ -25,7 +25,7 @@ def local(ctx, debug=True):
         'workers': 1,
         'rate': 10000,
         'tx_size': 512,
-        'duration': 60,
+        'duration': 30,
 
         # Unused
         'simulate_partition': False,
@@ -51,18 +51,18 @@ def local(ctx, debug=True):
         'use_parallel_proposals': True,
         'k': 1,
         'use_fast_path': True,
-        'fast_path_timeout': 80,
+        'fast_path_timeout': 130,
         'use_ride_share': False,
         'car_timeout': 2000,
         'cut_condition_type': 3,
 
-        'simulate_asynchrony': False,
+        'simulate_asynchrony': True,
         'asynchrony_type': [6],
 
         'asynchrony_start': [0], #ms
-        'asynchrony_duration': [60_000], #ms
+        'asynchrony_duration': [30_000], #ms
         'affected_nodes': [1],
-        'egress_penalty': 100, #ms
+        'egress_penalty': 150, #ms
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,
@@ -139,7 +139,7 @@ def remote(ctx, debug=True):
         'workers': 1,
         'collocate': True,
         # 'rate': [170_000, 160_000],
-        'rate': [200_000],
+        'rate': [150_000],
         'tx_size': 512,
         'duration': 120,
         'runs': 1,
@@ -150,36 +150,36 @@ def remote(ctx, debug=True):
         'partition_duration': 5,
         'partition_nodes': 2,
         
-        'enable_hotspot': True,
+        'enable_hotspot': False,
         'hotspot_windows':[[0, 120]],
         'hotspot_nodes': [5],
         'hotspot_rates': [0.9],
     }
     node_params = {
-        'timeout_delay': 4000,  # ms
-        'header_size': 256,  # bytes
-        'max_header_delay': 4000,  # ms
+        'timeout_delay': 2000,  # ms
+        'header_size': 1000,  # bytes
+        'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
-        'max_batch_delay': 4000,  # ms
-        'use_optimistic_tips': False,
+        'max_batch_delay': 200,  # ms
+        'use_optimistic_tips': True,
         'use_parallel_proposals': True,
         'k': 1,
-        'use_fast_path': False,
+        'use_fast_path': True,
         'fast_path_timeout': 100,
         'use_ride_share': False,
         'car_timeout': 2000,
-        'cut_condition_type': 8,
+        'cut_condition_type': 7,
 
-        'simulate_asynchrony': True,
-        'asynchrony_type': [5],
+        'simulate_asynchrony': False,
+        'asynchrony_type': [6],
 
-        'asynchrony_start': [0], #ms
-        'asynchrony_duration': [60_000], #ms
+        'asynchrony_start': [20], #ms
+        'asynchrony_duration': [40_000], #ms
         'affected_nodes': [1],
-        'egress_penalty': 200, #ms
+        'egress_penalty': 150, #ms
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,
