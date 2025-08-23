@@ -912,7 +912,7 @@ impl Core {
                 consensus_votes: vec![], //Create dummy vote with no sigs => this indicates its the Car timeout
                 //consensus_instance: None
             };
-            let fast_timer = CarTimer::new(t_vote, self.fast_path_timeout);
+            let fast_timer = CarTimer::new(t_vote, self.car_timeout);
             self.car_timer_futures.push(Box::pin(fast_timer));
         }
 

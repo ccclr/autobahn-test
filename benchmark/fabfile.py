@@ -157,7 +157,7 @@ def remote(ctx, debug=True):
     }
     node_params = {
         'timeout_delay': 1500,  # ms
-        'header_size': 1000,  # bytes
+        'header_size': 64,  # bytes
         'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
@@ -168,9 +168,9 @@ def remote(ctx, debug=True):
         'use_parallel_proposals': True,
         'k': 1,
         'use_fast_path': False,
-        'fast_path_timeout': 100,
+        'fast_path_timeout': 30,
         'use_ride_share': False,
-        'car_timeout': 2000,
+        'car_timeout': 100,
         'cut_condition_type': 3,
 
         'simulate_asynchrony': True,
@@ -179,7 +179,7 @@ def remote(ctx, debug=True):
         'asynchrony_start': [0], #ms
         'asynchrony_duration': [60_000], #ms
         'affected_nodes': [1],
-        'egress_penalty': 40, #ms
+        'egress_penalty': 50, #ms
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,
