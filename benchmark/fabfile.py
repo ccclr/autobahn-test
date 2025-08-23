@@ -135,13 +135,13 @@ def remote(ctx, debug=True):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
-        'nodes': [10],
+        'nodes': [4],
         'workers': 1,
         'collocate': True,
         # 'rate': [170_000, 160_000],
-        'rate': [150_000],
+        'rate': [100_000],
         'tx_size': 512,
-        'duration': 120,
+        'duration': 60,
         'runs': 1,
 
         # Unused
@@ -156,30 +156,30 @@ def remote(ctx, debug=True):
         'hotspot_rates': [0.9],
     }
     node_params = {
-        'timeout_delay': 2000,  # ms
-        'header_size': 1000,  # bytes
-        'max_header_delay': 200,  # ms
+        'timeout_delay': 1500,  # ms
+        'header_size': 32,  # bytes
+        'max_header_delay': 1000,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 10_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
-        'max_batch_delay': 200,  # ms
+        'max_batch_delay': 1000,  # ms
         'use_optimistic_tips': True,
         'use_parallel_proposals': True,
         'k': 1,
-        'use_fast_path': True,
-        'fast_path_timeout': 100,
+        'use_fast_path': False,
+        'fast_path_timeout': 80,
         'use_ride_share': False,
         'car_timeout': 2000,
-        'cut_condition_type': 7,
+        'cut_condition_type': 3,
 
-        'simulate_asynchrony': False,
+        'simulate_asynchrony': True,
         'asynchrony_type': [6],
 
-        'asynchrony_start': [20], #ms
-        'asynchrony_duration': [40_000], #ms
+        'asynchrony_start': [0], #ms
+        'asynchrony_duration': [60_000], #ms
         'affected_nodes': [1],
-        'egress_penalty': 150, #ms
+        'egress_penalty': 100, #ms
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,
