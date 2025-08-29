@@ -23,9 +23,9 @@ def local(ctx, debug=True):
         'faults': 0, 
         'nodes': 4,
         'workers': 1,
-        'rate': 10000,
+        'rate': 130000,
         'tx_size': 512,
-        'duration': 30,
+        'duration': 60,
 
         # Unused
         'simulate_partition': False,
@@ -39,30 +39,30 @@ def local(ctx, debug=True):
         'hotspot_rates': [0.9],
     }
     node_params = {
-        'timeout_delay': 1500,  # ms
+        'timeout_delay': 1_000,  # ms
         'header_size': 32,  # bytes
-        'max_header_delay': 1000,  # ms
+        'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 1_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
-        'max_batch_delay': 1000,  # ms
-        'use_optimistic_tips': True,
+        'max_batch_delay': 200,  # ms
+        'use_optimistic_tips': False,
         'use_parallel_proposals': True,
         'k': 1,
         'use_fast_path': True,
-        'fast_path_timeout': 130,
+        'fast_path_timeout': 200,
         'use_ride_share': False,
         'car_timeout': 2000,
         'cut_condition_type': 3,
 
-        'simulate_asynchrony': True,
+        'simulate_asynchrony': False,
         'asynchrony_type': [6],
 
         'asynchrony_start': [0], #ms
-        'asynchrony_duration': [30_000], #ms
+        'asynchrony_duration': [120_000], #ms
         'affected_nodes': [1],
-        'egress_penalty': 150, #ms
+        'egress_penalty': 30, #ms
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,
@@ -139,9 +139,9 @@ def remote(ctx, debug=True):
         'workers': 1,
         'collocate': True,
         # 'rate': [170_000, 160_000],
-        'rate': [60_000],
+        'rate': [140_000],
         'tx_size': 512,
-        'duration': 60,
+        'duration': 120,
         'runs': 1,
 
         # Unused
@@ -156,30 +156,30 @@ def remote(ctx, debug=True):
         'hotspot_rates': [0.9],
     }
     node_params = {
-        'timeout_delay': 1500,  # ms
-        'header_size': 64,  # bytes
+        'timeout_delay': 1_000,  # ms
+        'header_size': 32,  # bytes
         'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
-        'sync_retry_delay': 10_000,  # ms
+        'sync_retry_delay': 1_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
         'max_batch_delay': 200,  # ms
-        'use_optimistic_tips': True,
+        'use_optimistic_tips': False,
         'use_parallel_proposals': True,
         'k': 1,
-        'use_fast_path': False,
-        'fast_path_timeout': 30,
+        'use_fast_path': True,
+        'fast_path_timeout': 150,
         'use_ride_share': False,
-        'car_timeout': 100,
+        'car_timeout': 2000,
         'cut_condition_type': 3,
 
-        'simulate_asynchrony': True,
+        'simulate_asynchrony': False,
         'asynchrony_type': [6],
 
         'asynchrony_start': [0], #ms
-        'asynchrony_duration': [60_000], #ms
+        'asynchrony_duration': [120_000], #ms
         'affected_nodes': [1],
-        'egress_penalty': 50, #ms
+        'egress_penalty': 30, #ms
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,

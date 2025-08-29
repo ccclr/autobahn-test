@@ -912,6 +912,7 @@ impl Core {
                 consensus_votes: vec![], //Create dummy vote with no sigs => this indicates its the Car timeout
                 //consensus_instance: None
             };
+            debug!("car timer starts");
             let fast_timer = CarTimer::new(t_vote, self.car_timeout);
             self.car_timer_futures.push(Box::pin(fast_timer));
         }
@@ -2825,7 +2826,11 @@ impl Core {
                 // We receive an event that timer expired
                 Some((slot, view)) = self.timer_futures.next() => self.local_timeout_round(slot, view).await,
 
-                Some(vote) = self.car_timer_futures.next() => self.process_vote(vote, true).await,
+                Some(vote) = self.car_timer_futures.next() => {
+                    debug!("car timer expired");
+                    self.process_vote(vote, true).await;
+                    Ok(())
+                }
 
                 //Fast path loopback for external consensus
                 Some(vote) = self.fast_timer_futures.next() => {
