@@ -202,23 +202,26 @@ impl HotspotConfig {
         }
         
         let non_hotspot_nodes = total_nodes - num_hotspot;
+        let hotspot_rate = base_rate * (1.0 + rate_increase);
         
         if node_idx < num_hotspot {
             // Hotspot node: gets extra rate
             // Formula: ensure total rate = total_nodes * base_rate
             // hotspot_rate * num_hotspot + normal_rate * non_hotspot_nodes = total_nodes * base_rate
-            // hotspot_rate = base_rate * (1 + rate_increase)
+            
             // Solve for normal_rate, then return hotspot_rate
-            let hotspot_rate = base_rate ;
+            // let hotspot_rate = base_rate ;
             
             hotspot_rate
         } else {
+            let normal_rate = (base_rate * total_nodes as f64 - hotspot_rate * num_hotspot as f64 ) / ((total_nodes-num_hotspot) as f64);
             // Non-hotspot node: rate decreases to compensate for hotspot nodes
-            let mut normal_rate = base_rate * (1.0 - rate_increase);
-            if normal_rate >= 2000.0{
-                normal_rate = 2000.0;
-            }
+            // let mut normal_rate = base_rate * (1.0 - rate_increase);
+            // if normal_rate >= 2000.0{
+            //     normal_rate = 2000.0;
+            // }
             normal_rate
+
         }
     }
 }

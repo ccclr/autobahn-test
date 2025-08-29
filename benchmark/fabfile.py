@@ -23,9 +23,9 @@ def local(ctx, debug=True):
         'faults': 0, 
         'nodes': 4,
         'workers': 1,
-        'rate': 130000,
+        'rate': 10000,
         'tx_size': 512,
-        'duration': 60,
+        'duration': 10,
 
         # Unused
         'simulate_partition': False,
@@ -33,10 +33,10 @@ def local(ctx, debug=True):
         'partition_duration': 5,
         'partition_nodes': 1,
         
-        'enable_hotspot': False,
+        'enable_hotspot': True,
         'hotspot_windows':[[0, 30]],
         'hotspot_nodes': [2],
-        'hotspot_rates': [0.9],
+        'hotspot_rates': [0.5],
     }
     node_params = {
         'timeout_delay': 1_000,  # ms
@@ -135,11 +135,11 @@ def remote(ctx, debug=True):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
-        'nodes': [4],
+        'nodes': [10],
         'workers': 1,
         'collocate': True,
         # 'rate': [170_000, 160_000],
-        'rate': [140_000],
+        'rate': [150_000],
         'tx_size': 512,
         'duration': 120,
         'runs': 1,
@@ -153,10 +153,10 @@ def remote(ctx, debug=True):
         'enable_hotspot': False,
         'hotspot_windows':[[0, 120]],
         'hotspot_nodes': [5],
-        'hotspot_rates': [0.9],
+        'hotspot_rates': [0.3],
     }
     node_params = {
-        'timeout_delay': 1_000,  # ms
+        'timeout_delay': 1_500,  # ms
         'header_size': 32,  # bytes
         'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
@@ -166,12 +166,12 @@ def remote(ctx, debug=True):
         'max_batch_delay': 200,  # ms
         'use_optimistic_tips': False,
         'use_parallel_proposals': True,
-        'k': 1,
+        'k': 3,
         'use_fast_path': True,
-        'fast_path_timeout': 150,
+        'fast_path_timeout': 100,
         'use_ride_share': False,
         'car_timeout': 2000,
-        'cut_condition_type': 3,
+        'cut_condition_type': 1,
 
         'simulate_asynchrony': False,
         'asynchrony_type': [6],
@@ -179,7 +179,7 @@ def remote(ctx, debug=True):
         'asynchrony_start': [0], #ms
         'asynchrony_duration': [120_000], #ms
         'affected_nodes': [1],
-        'egress_penalty': 30, #ms
+        'egress_penalty': 10, #ms
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,
