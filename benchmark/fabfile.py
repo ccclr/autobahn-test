@@ -139,7 +139,7 @@ def remote(ctx, debug=True):
         'workers': 1,
         'collocate': True,
         # 'rate': [170_000, 160_000],
-        'rate': [140_000],
+        'rate': [200_000],
         'tx_size': 512,
         'duration': 120,
         'runs': 1,
@@ -153,7 +153,7 @@ def remote(ctx, debug=True):
         'enable_hotspot': True,
         'hotspot_windows':[[0, 120]],
         'hotspot_nodes': [5],
-        'hotspot_rates': [0.5],
+        'hotspot_rates': [0.9],
     }
     node_params = {
         'timeout_delay': 1_500,  # ms
