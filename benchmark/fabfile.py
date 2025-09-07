@@ -139,12 +139,12 @@ def remote(ctx, debug=True):
         'workers': 1,
         'collocate': True,
         # 'rate': [170_000, 160_000],
-        'rate': [50_000],
+        'rate': [140_000],
         'tx_size': 512,
         'duration': 120,
         'runs': 1,
 
-        # Unused
+        # Unused5
         'simulate_partition': False,
         'partition_start': 5,
         'partition_duration': 5,
@@ -167,11 +167,11 @@ def remote(ctx, debug=True):
         'use_optimistic_tips': False,
         'use_parallel_proposals': True,
         'k': 1,
-        'use_fast_path': True,
-        'fast_path_timeout': 100,
+        'use_fast_path': False,
+        'fast_path_timeout': 200,
         'use_ride_share': False,
         'car_timeout': 2000,
-        'cut_condition_type': 4,
+        'cut_condition_type': 1,
 
         'simulate_asynchrony': False,
         'asynchrony_type': [6],
