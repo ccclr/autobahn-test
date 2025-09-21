@@ -2647,6 +2647,13 @@ impl Core {
                     .primary(&author)
                     .expect("Author of valid header is not in the committee")
                     .primary_to_primary;
+                debug!(
+                    "send_msg_normal: UNICAST -> target={:?}, addr={:?}, msg={:?}, consensus_handler={}",
+                    author,
+                    address,
+                    message,
+                    consensus_handler
+                );
                 let bytes = bincode::serialize(&message).expect("Failed to serialize message");
                 let handler = self.network.send(address, Bytes::from(bytes)).await;
                 if consensus_handler {
@@ -2662,12 +2669,25 @@ impl Core {
                 }
             }
             None => {
+                let targets: Vec<PublicKey> = self
+                    .committee
+                    .others_primaries(&self.name)
+                    .iter()
+                    .map(|(pk, _)| pk.clone())
+                    .collect();
                 let addresses = self
                     .committee
                     .others_primaries(&self.name)
                     .iter()
                     .map(|(_, x)| x.primary_to_primary)
                     .collect();
+                debug!(
+                    "send_msg_normal: BROADCAST -> num_targets={}, targets={:?}, msg={:?}, consensus_handler={}",
+                    targets.len(),
+                    targets,
+                    message,
+                    consensus_handler
+                );
 
                 let bytes = bincode::serialize(&message).expect("Failed to serialize message");
                 let handlers = self.network.broadcast(addresses, Bytes::from(bytes)).await;
@@ -2944,20 +2964,35 @@ impl Core {
                 Err(e) => warn!("{}", e),
             }
 
-            // Cleanup internal state.
-            let round = self.consensus_round.load(Ordering::Relaxed);
-            if round > self.gc_depth {
-                let gc_round = round - self.gc_depth;
-                self.last_voted.retain(|k, _| k >= &gc_round);
-                //self.processing.retain(|k, _| k >= &gc_round);
+            // Cleanup in discrete steps of gc_depth using the SHORTEST lane as reference.
+            // Reference height = min(proposal heights) from the active proposal set.
+            if self.gc_depth > 0 {
+                let reference_height = {
+                    let min_opt = self.current_certified_tips.values().map(|p| p.height).min();
+                    min_opt.unwrap_or(self.current_header.height)
+                };
 
-                //self.current_headers.retain(|k, _| k >= &gc_round);
-                //self.vote_aggregators.retain(|k, _| k >= &gc_round);
+                let current_period = reference_height / self.gc_depth;
+                let last_period = self.gc_round / self.gc_depth;
+                if current_period > last_period {
+                    let cutoff = reference_height.saturating_sub(self.gc_depth);
+                    self.last_voted.retain(|h, _| *h >= cutoff);
+                    //self.processing.retain(|h, _| *h >= cutoff);
 
-                //self.certificates_aggregators.retain(|k, _| k >= &gc_round);
-                self.cancel_handlers.retain(|k, _| k >= &gc_round);
-                self.gc_round = gc_round;
-                debug!("GC round moved to {}", self.gc_round);
+                    //self.current_headers.retain(|h, _| *h >= cutoff);
+                    //self.vote_aggregators.retain(|h, _| *h >= cutoff);
+
+                    //self.certificates_aggregators.retain(|h, _| *h >= cutoff);
+                    self.cancel_handlers.retain(|h, _| *h >= cutoff);
+                    // Move gc_round to the period boundary (e.g., 5, 10, 15 when gc_depth=5)
+                    self.gc_round = current_period * self.gc_depth;
+                    debug!(
+                        "GC height window moved to {} (cutoff={}, ref_height={})",
+                        self.gc_round,
+                        cutoff,
+                        reference_height
+                    );
+                }
             }
         }
     }

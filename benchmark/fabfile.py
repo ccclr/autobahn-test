@@ -42,7 +42,7 @@ def local(ctx, debug=True):
         'timeout_delay': 1_500,  # ms
         'header_size': 32,  # bytes
         'max_header_delay': 4000,  # ms
-        'gc_depth': 50,  # rounds
+        'gc_depth': 5,  # rounds
         'sync_retry_delay': 1_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
@@ -171,7 +171,7 @@ def remote(ctx, debug=True):
         'fast_path_timeout': 200,
         'use_ride_share': False,
         'car_timeout': 2000,
-        'cut_condition_type': 1,
+        'cut_condition_type': 4,
 
         'simulate_asynchrony': False,
         'asynchrony_type': [6],
