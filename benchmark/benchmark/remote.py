@@ -77,6 +77,7 @@ class Bench:
             'sudo apt-get -y install build-essential',
             'sudo apt-get -y install cmake',
             'sudo apt-get -y install clang git curl',
+            'sudo apt-get install -y iperf3',
 
             'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y',
             'source $HOME/.cargo/env',

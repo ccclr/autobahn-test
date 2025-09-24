@@ -50,14 +50,14 @@ def local(ctx, debug=True):
         'use_optimistic_tips': False,
         'use_parallel_proposals': True,
         'k': 1,
-        'use_fast_path': False,
-        'fast_path_timeout': 200,
+        'use_fast_path': True,
+        'fast_path_timeout': 20,
         'use_ride_share': False,
         'car_timeout': 2000,
         'cut_condition_type': 3,
 
-        'simulate_asynchrony': False,
-        'asynchrony_type': [7],
+        'simulate_asynchrony': True,
+        'asynchrony_type': [6],
 
         'asynchrony_start': [0], #ms
         'asynchrony_duration': [30_000], #ms

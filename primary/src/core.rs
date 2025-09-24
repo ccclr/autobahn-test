@@ -949,7 +949,10 @@ impl Core {
                                     debug!("taking fast path!");
                                     ConsensusMessage::Commit {slot: *slot, view: *view,  qc, proposals: proposals.clone() }
                                     }, // Create Commit if we have FastPrepareQC
-                                false => ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: proposals.clone() },
+                                false => {
+                                    debug!("taking slow path!");
+                                    ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: proposals.clone() }
+                                }
                             };
                             //let new_consensus_message = ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: new_proposals,};
                             
@@ -963,6 +966,7 @@ impl Core {
                         ConsensusMessage::Confirm {slot, view, qc: _,proposals,}
                         => {
                             debug!("Commit QC formed in slot {:?}", slot);
+                            
                             let new_consensus_message = ConsensusMessage::Commit {slot: *slot, view: *view, qc, proposals: proposals.clone(),};
 
                             // Send this new instance to the proposer
@@ -1142,12 +1146,7 @@ impl Core {
                 //println!("QC formed");
                 match current_instance {
                     ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals,} 
-                    => {
-                        // if qc_maker.fast_path_disabled {
-                        //     debug!("Fast path disabled");
-                        //     return Ok(());
-                        // }
-                        
+                    => {                     
                         debug!("Prepare QC formed in slot {:?}", slot);
                         debug!("Prepare has slot: {}, view: {}, digest: {}", slot, view, current_instance.digest());
 
@@ -1156,12 +1155,13 @@ impl Core {
                                 debug!("taking fast path for slot {:?}", slot);
                                 let new_consensus_message = ConsensusMessage::Commit {slot: *slot, view: *view,  qc, proposals: proposals.clone() };
                                 self.send_consensus_req(new_consensus_message).await?;
-                                }, // Create Commit if we have FastPrepareQC
+                            }, // Create Commit if we have FastPrepareQC
                             false => {
                                 let sent_confirm = qc_maker.sent_confirm.clone();
                                 let completed_fast = qc_maker.completed_fast;
                                 if !sent_confirm && !completed_fast {
                                     debug!("sending confirm for slot {:?} with qc {:?}", slot, qc);
+                                    debug!("taking slow path for slot {:?}", slot);
                                     let new_consensus_message = ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: proposals.clone() };
                                     qc_maker.sent_confirm = true;
                                     self.send_consensus_req(new_consensus_message).await?;
@@ -1176,6 +1176,7 @@ impl Core {
                     ConsensusMessage::Confirm {slot, view, qc: _,proposals,}
                     => {
                         debug!("Commit QC formed in slot {:?}", slot);
+                        
                         let new_consensus_message = ConsensusMessage::Commit {slot: *slot, view: *view, qc, proposals: proposals.clone(),};
 
                         // Send this new instance to the proposer
@@ -1805,7 +1806,7 @@ impl Core {
                 }
 
                 for (pk, proposal) in proposals {
-                    debug!("prepare slot {:?}, proposal height {:?}", slot, proposal.height);
+                    debug!("prepare slot {:?}, validator: {:?}, proposal height {:?}", slot, pk, proposal.height);
                 }
                 debug!("during simulated partition is {:?} for slot {:?}", self.during_simulated_asynchrony, slot);
                 debug!("prepare vote in slot {:?}", slot);
