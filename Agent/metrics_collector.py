@@ -29,7 +29,7 @@ class NetworkBaseline:
     intra_region_latency_ms: float
     cross_region_latency_ms: float
     latency_variance: float
-    node_geographic_distribution: List[str]
+    # node_geographic_distribution: List[str]
     network_asymmetry: float
 
 @dataclass
@@ -44,15 +44,24 @@ class DAGGrowthPattern:
 class ConsensusMetrics:
     """Layer 2 Part II: Consensus metrics"""
     fast_path_ratio: float
-    # slow_path_ratio: float
+    slow_path_ratio: float
     # proposal_commit_success_rate: float
     # consensus_latency_ms: float
     # consensus_throughput_tps: float
     # timeout_events: int
     retry_events: int
-    commit_latency_by_slot_ms: Dict[int, float]
+    # commit_latency_by_slot_ms: Dict[int, float]
     commit_latency_summary_ms: Dict[str, float]
-    
+
+@dataclass
+class Workload:
+    """Layer 3: Workload characteristics (self-sensed)"""
+    tx_size_bytes: int
+    tx_arrival_rate_tps: float
+
+    @property
+    def ingress_bps(self) -> float:
+        return float(self.tx_size_bytes) * float(self.tx_arrival_rate_tps) * 8.0
 
 @dataclass
 class SystemState:
@@ -62,6 +71,7 @@ class SystemState:
     network: NetworkBaseline
     dag_growth: DAGGrowthPattern
     consensus: ConsensusMetrics
+    workload: Workload
     node_params: Dict[str, Any]  # current node parameters
 
 class MetricsCollector:
@@ -129,28 +139,28 @@ class MetricsCollector:
                     network_bandwidth_mbps = self._measure_bandwidth_via_iperf3(peers)
             
             # Fallback: NIC link speed or conservative default
-            if network_bandwidth_mbps <= 0.0:
-                # Try NIC reported speed
-                nic_speed = 0.0
-                try:
-                    # pick primary interface (heuristic)
-                    primary_nic = None
-                    for nic in os.listdir("/sys/class/net"):
-                        if nic.startswith("lo"):
-                            continue
-                        primary_nic = nic
-                        break
-                    if primary_nic:
-                        with open(f"/sys/class/net/{primary_nic}/speed") as f:
-                            nic_speed = float(f.read().strip())
-                except Exception:
-                    nic_speed = 0.0
-                if nic_speed > 0:
-                    # use 60% of link speed as a conservative estimate
-                    network_bandwidth_mbps = nic_speed * 0.6
-                else:
-                    # final fallback default
-                    network_bandwidth_mbps = 10000.0
+            # if network_bandwidth_mbps <= 0.0:
+            #     # Try NIC reported speed
+            #     nic_speed = 0.0
+            #     try:
+            #         # pick primary interface (heuristic)
+            #         primary_nic = None
+            #         for nic in os.listdir("/sys/class/net"):
+            #             if nic.startswith("lo"):
+            #                 continue
+            #             primary_nic = nic
+            #             break
+            #         if primary_nic:
+            #             with open(f"/sys/class/net/{primary_nic}/speed") as f:
+            #                 nic_speed = float(f.read().strip())
+            #     except Exception:
+            #         nic_speed = 0.0
+            #     if nic_speed > 0:
+            #         # use 60% of link speed as a conservative estimate
+            #         network_bandwidth_mbps = nic_speed * 0.6
+            #     else:
+            #         # final fallback default
+            #         network_bandwidth_mbps = 10000.0
             
             # Workers per node (from parameter file)
             workers_per_node = 1
@@ -182,6 +192,7 @@ class MetricsCollector:
                 cross_latencies = [latency_matrix[i][j] for i in range(n) for j in range(n) 
                                 if i != j and not np.isnan(latency_matrix[i][j])]
                 
+                print(cross_latencies)
                 intra_region_latency = np.mean(intra_latencies) if intra_latencies else 1.0
                 cross_region_latency = np.mean(cross_latencies) if cross_latencies else 50.0
                 latency_variance = np.var(cross_latencies) if cross_latencies else 5.0
@@ -199,15 +210,15 @@ class MetricsCollector:
                     intra_region_latency_ms=float(intra_region_latency),
                     cross_region_latency_ms=float(cross_region_latency),
                     latency_variance=float(latency_variance),
-                    node_geographic_distribution=[f"region_{i}" for i in range(n)],
+                    # node_geographic_distribution=[f"region_{i}" for i in range(n)],
                     network_asymmetry=float(network_asymmetry)
                 )
             else:
                 logger.error(f"Failed to collect network metrics")
-                return NetworkBaseline(1.0, 50.0, 5.0, ["local"], 0.1)
+                return NetworkBaseline(1.0, 50.0, 5.0, 0.1)
         except Exception as e:
             logger.error(f"Failed to collect network metrics: {e}")
-            return NetworkBaseline(1.0, 50.0, 5.0, ["local"], 0.1)
+            return NetworkBaseline(1.0, 50.0, 5.0, 0.1)
             
     def _call_fabfile_latency(self) -> Optional[np.ndarray]:
         """Directly call the latency function from fabfile"""
@@ -215,29 +226,45 @@ class MetricsCollector:
             import subprocess
             import os
             
-            # Change to project directory
-            project_dir = self.log_dir.parent.parent  # back to autobahn-test directory
+            # Run in benchmark directory (where fabfile.py resides)
+            benchmark_dir = self.log_dir.parent  # /.../autobahn-test/benchmark
             original_cwd = os.getcwd()
             
             try:
-                os.chdir(project_dir)
+                os.chdir(benchmark_dir)
                 
-                # Invoke fab latency command
+                # Invoke fab latency command (boolean flag style)
                 result = subprocess.run(
-                    ['fab', 'latency', '--intra-region=True'],
+                    ['fab', 'latency', '--intra-region'],
                     capture_output=True,
                     text=True,
                     timeout=300  # 5 minutes timeout
                 )
                 
-                if result.returncode == 0:
-                    # Read result from output file
-                    latency_files = list(self.log_dir.glob("latency_*_matrix_*.npy"))
-                    if latency_files:
-                        latest_file = max(latency_files, key=os.path.getctime)
-                        return np.load(latest_file)
+                if result.returncode != 0:
+                    logger.error(f"fab latency failed: stdout=\n{result.stdout}\nstderr=\n{result.stderr}")
+                    return None
                 
-                return None
+                # Prefer region matrix, fallback to full matrix
+                region_files = sorted(
+                    [f for f in os.listdir('.') if f.startswith('latency_region_matrix_') and f.endswith('.npy')],
+                    key=os.path.getctime
+                )
+                full_files = sorted(
+                    [f for f in os.listdir('.') if f.startswith('latency_full_matrix_') and f.endswith('.npy')],
+                    key=os.path.getctime
+                )
+                pick_path: Optional[str] = None
+                if region_files:
+                    pick_path = region_files[-1]
+                elif full_files:
+                    pick_path = full_files[-1]
+                
+                if pick_path is None:
+                    logger.error("No latency matrix files were produced by fab latency")
+                    return None
+                
+                return np.load(pick_path)
                 
             finally:
                 os.chdir(original_cwd)
@@ -245,6 +272,38 @@ class MetricsCollector:
         except Exception as e:
             logger.error(f"Failed to run fab latency command: {e}")
             return None
+
+    def collect_workload(self, window_sec: int = 60) -> Workload:
+        """Self-sense workload.
+        Priority 1: parse latest client-*-*.log for configured tx size and tx rate (TPS).
+        Priority 2: fallback to primary logs within recent time window to estimate TPS and size.
+        """
+        # Try client logs first
+        try:
+            logs_dir = Path("/home/ccclr0302/autobahn-test/benchmark/logs/")
+            client_logs = sorted(logs_dir.glob("client-*-*.log"), key=lambda p: p.stat().st_mtime)
+            if client_logs:
+                latest_client = client_logs[-1]
+                tx_size_bytes: Optional[int] = None
+                tx_rate_tps: Optional[float] = None
+                with open(latest_client, 'r') as f:
+                    for line in f:
+                        m_size = re.search(r"Transactions size:\s*(\d+)\s*B", line)
+                        if m_size:
+                            try:
+                                tx_size_bytes = int(m_size.group(1))
+                            except Exception:
+                                pass
+                        m_rate = re.search(r"Transactions rate:\s*([0-9]+(?:\.[0-9]+)?)\s*tx/s", line)
+                        if m_rate:
+                            try:
+                                tx_rate_tps = float(m_rate.group(1))
+                            except Exception:
+                                pass
+                if tx_size_bytes is not None and tx_rate_tps is not None:
+                    return Workload(tx_size_bytes=max(1, tx_size_bytes), tx_arrival_rate_tps=max(0.0, tx_rate_tps))
+        except Exception as e:
+            logger.debug(f"Parsing client logs for workload failed: {e}")
     
     def collect_dag_growth_pattern(self) -> DAGGrowthPattern:
         """Collect DAG growth pattern metrics - group by validator pk and keep per-lane growth rate"""
@@ -258,7 +317,7 @@ class MetricsCollector:
             
             if not primary_logs:
                 print("No primary log found, return default values")
-                return DAGGrowthPattern(0, 0, 0, 0, 0, 0, 0)
+                return DAGGrowthPattern(0, 0, 0, 0)
             
             # Collect all prepare events and group by validator pk
             prepare_events = []  # [(slot, validator_pk, proposal_height, timestamp)]
@@ -298,8 +357,8 @@ class MetricsCollector:
                                             prepare_events.append((slot, validator_pk, proposal_height, timestamp))
                                             
                                             # Print sample events
-                                            if len(prepare_events) <= 5:
-                                                print(f"  Event {len(prepare_events)}: slot={slot}, validator={validator_pk[:16]}..., height={proposal_height}, time={timestamp_str}")
+                                            # if len(prepare_events) <= 5:
+                                            #     print(f"  Event {len(prepare_events)}: slot={slot}, validator={validator_pk[:16]}..., height={proposal_height}, time={timestamp_str}")
                                         
                                     except Exception as e:
                                         logger.debug(f"Failed to parse timestamp: {e}")
@@ -313,7 +372,7 @@ class MetricsCollector:
             
             if not prepare_events:
                 print("No valid prepare events found, return default values")
-                return DAGGrowthPattern(0, 0, 0, 0, 0, 0, 0)
+                return DAGGrowthPattern(0, 0, 0, 0)
             
             # Sort by time
             prepare_events.sort(key=lambda x: x[3])
@@ -329,12 +388,12 @@ class MetricsCollector:
             
             print(f"\nAggregation by validator completed:")
             print(f"  Found {len(validator_lanes)} distinct validators")
-            for i, (validator_pk, events) in enumerate(validator_lanes.items()):
-                if i < 3:
-                    print(f"  Validator {i+1}: {validator_pk[:16]}... has {len(events)} events")
-                elif i == 3:
-                    print(f"  ... and {len(validator_lanes) - 3} more validators")
-                    break
+            # for i, (validator_pk, events) in enumerate(validator_lanes.items()):
+                # if i < 3:
+                #     print(f"  Validator {i+1}: {validator_pk[:16]}... has {len(events)} events")
+                # elif i == 3:
+                #     print(f"  ... and {len(validator_lanes) - 3} more validators")
+                #     break
             
             # Compute per-validator lane growth rate based on proposal height change
             validator_growth_rates = {}  # {validator_pk: [growth_rate1, growth_rate2, ...]}
@@ -348,9 +407,9 @@ class MetricsCollector:
                 # Sort events by time
                 lane_events.sort(key=lambda x: x[2])
                 
-                print(f"\nAnalyzing validator {validator_pk[:16]}...:")
-                print(f"  Total events: {len(lane_events)}")
-                print(f"  Height range: {min(event[1] for event in lane_events)} to {max(event[1] for event in lane_events)}")
+                # print(f"\nAnalyzing validator {validator_pk[:16]}...:")
+                # print(f"  Total events: {len(lane_events)}")
+                # print(f"  Height range: {min(event[1] for event in lane_events)} to {max(event[1] for event in lane_events)}")
                 
                 # Compute growth rate within the time window
                 current_time = lane_events[0][2]
@@ -381,8 +440,8 @@ class MetricsCollector:
                                 window_count += 1
                                 
                                 # Print first few windows' details
-                                if window_count <= 3:
-                                    print(f"    Window {window_count}: height {start_height} -> {end_height} ({height_growth}), time {time_span:.2f}s, growth rate {growth_rate:.2f} height/s")
+                                # if window_count <= 3:
+                                #     print(f"    Window {window_count}: height {start_height} -> {end_height} ({height_growth}), time {time_span:.2f}s, growth rate {growth_rate:.2f} height/s")
                         
                         # Start a new time window
                         current_time = timestamp
@@ -419,9 +478,9 @@ class MetricsCollector:
             for growth_rates in validator_growth_rates.values():
                 all_growth_rates.extend(growth_rates)
             
-            print(f"\nOverall growth rate statistics:")
-            print(f"  Total windows: {len(all_growth_rates)}")
-            print(f"  Growth rates: {all_growth_rates[:10]}{'...' if len(all_growth_rates) > 10 else ''}")
+            # print(f"\nOverall growth rate statistics:")
+            # print(f"  Total windows: {len(all_growth_rates)}")
+            # print(f"  Growth rates: {all_growth_rates[:10]}{'...' if len(all_growth_rates) > 10 else ''}")
             
             # Compute indicators
             avg_lane_growth_rate = np.mean(all_growth_rates) if all_growth_rates else 0
@@ -459,7 +518,7 @@ class MetricsCollector:
         except Exception as e:
             logger.error(f"Failed to collect DAG growth metrics: {e}")
             print(f"Error: {e}")
-            return DAGGrowthPattern(0, 0, 0, 0, 0, 0, 0)
+            return DAGGrowthPattern(0, 0, 0, 0)
     
     def collect_consensus_metrics(self) -> ConsensusMetrics:
         """Collect consensus metrics"""
@@ -468,7 +527,7 @@ class MetricsCollector:
             log_dir = Path("/home/ccclr0302/autobahn-test/benchmark/logs/")
             primary_logs = list(log_dir.glob("primary-*.log"))
             if not primary_logs:
-                return ConsensusMetrics(0, 0, 0, 0, 0, 0, 0)
+                return ConsensusMetrics(0, 0, 0, 0)
             
             fast_path_count = 0
             slow_path_count = 0
@@ -534,13 +593,17 @@ class MetricsCollector:
                             commit_slot = int(commit_m.group(1))
                             first_commit_ts.setdefault(commit_slot, timestamp)
             
-            # Compute per-slot commit latency (ms)
+            # Compute per-slot commit latency (ms) as inter-commit interval: time between previous and current commit
             commit_latency_by_slot_ms: Dict[int, float] = {}
-            for s, t_prep in first_prepare_ts.items():
-                if s in first_commit_ts:
-                    commit_latency_by_slot_ms[s] = float(max(0.0, (first_commit_ts[s] - t_prep) * 1000.0))
+            # Build sorted list of (slot, first_commit_ts)
+            commit_items = sorted(first_commit_ts.items(), key=lambda kv: kv[1])
+            for i in range(1, len(commit_items)):
+                slot_curr, t_commit_curr = commit_items[i]
+                _, t_commit_prev = commit_items[i - 1]
+                inter_ms = float(max(0.0, (t_commit_curr - t_commit_prev) * 1000.0))
+                commit_latency_by_slot_ms[slot_curr] = inter_ms
 
-            # Build distribution summary
+            # Build distribution summary over inter-commit intervals
             lat_vals = list(commit_latency_by_slot_ms.values())
             summary: Dict[str, float] = {}
             if lat_vals:
@@ -556,7 +619,7 @@ class MetricsCollector:
                 
             total_paths = fast_path_count + slow_path_count
             fast_path_ratio = fast_path_count / total_paths if total_paths > 0 else 0
-            # slow_path_ratio = slow_path_count / total_paths if total_paths > 0 else 0
+            slow_path_ratio = slow_path_count / total_paths if total_paths > 0 else 0
             # commit_success_rate = commit_success_count / commit_total if commit_total > 0 else 0
             # consensus_latency = np.mean(consensus_latencies) if consensus_latencies else 0
             
@@ -565,18 +628,18 @@ class MetricsCollector:
             
             return ConsensusMetrics(
                 fast_path_ratio=float(fast_path_ratio),
-                # slow_path_ratio=float(slow_path_ratio),
+                slow_path_ratio=float(slow_path_ratio),
                 # proposal_commit_success_rate=float(commit_success_rate),
                 # consensus_latency_ms=float(consensus_latency),
                 # consensus_throughput_tps=float(consensus_throughput),
                 # timeout_events=timeout_events,
                 retry_events=retry_events,
-                commit_latency_by_slot_ms=commit_latency_by_slot_ms,
+                # commit_latency_by_slot_ms=commit_latency_by_slot_ms,
                 commit_latency_summary_ms=summary,
             )
         except Exception as e:
             logger.error(f"Failed to collect consensus metrics: {e}")
-            return ConsensusMetrics(0, 0, 0, 0, 0, 0, 0, 0, 0)
+            return ConsensusMetrics(0, 0, 0, 0)
     
     def load_current_node_params(self) -> Dict[str, Any]:
         """Load current node parameters"""
@@ -617,6 +680,7 @@ class MetricsCollector:
         dag_growth = self.collect_dag_growth_pattern()
         consensus = self.collect_consensus_metrics()
         node_params = self.load_current_node_params()
+        workload = self.collect_workload()
         
         return SystemState(
             timestamp=time.time(),
@@ -624,6 +688,7 @@ class MetricsCollector:
             network=network,
             dag_growth=dag_growth,
             consensus=consensus,
+            workload=workload,
             node_params=node_params
         )
     
@@ -642,6 +707,7 @@ class MetricsCollector:
             'network': asdict(state.network),
             'dag_growth': asdict(state.dag_growth),
             'consensus': asdict(state.consensus),
+            'workload': asdict(state.workload),
             'node_params': state.node_params
         }
         
@@ -679,7 +745,7 @@ class MetricsCollector:
         # Layer 2: consensus metrics
         consensus_vec = [
             state.consensus.fast_path_ratio,
-            # state.consensus.slow_path_ratio,
+            state.consensus.slow_path_ratio,
             # state.consensus.proposal_commit_success_rate,
             # state.consensus.consensus_latency_ms,
             # state.consensus.consensus_throughput_tps,
@@ -688,9 +754,16 @@ class MetricsCollector:
             # state.consensus.commit_latency_by_slot_ms,
             # state.consensus.commit_latency_summary_ms,
         ]
+
+        # Layer 3: workload metrics
+        workload_vec = [
+            float(state.workload.tx_size_bytes),
+            float(state.workload.tx_arrival_rate_tps),
+            float(state.workload.ingress_bps),
+        ]
         
         # Concatenate all vectors
-        state_vector = np.concatenate([hardware_vec, network_vec, dag_vec, consensus_vec])
+        state_vector = np.concatenate([hardware_vec, network_vec, dag_vec, consensus_vec, workload_vec])
         
         # Normalization (optional)
         state_vector = np.nan_to_num(state_vector, nan=0.0, posinf=1.0, neginf=0.0)
@@ -711,6 +784,7 @@ def main():
     print(f"Network baseline: {asdict(state.network)}\n")
     print(f"DAG growth pattern: {asdict(state.dag_growth)}\n")
     print(f"Consensus metrics: {asdict(state.consensus)}\n")
+    print(f"Workload: {asdict(state.workload)}\n")
     print(f"Node params: {state.node_params}\n")
     
     # Save state

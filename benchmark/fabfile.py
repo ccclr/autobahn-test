@@ -23,9 +23,9 @@ def local(ctx, debug=True):
         'faults': 0, 
         'nodes': 4,
         'workers': 1,
-        'rate': 50000,
+        'rate': 140000,
         'tx_size': 512,
-        'duration': 30,
+        'duration': 120,
 
         # Unused
         'simulate_partition': False,
@@ -33,31 +33,31 @@ def local(ctx, debug=True):
         'partition_duration': 5,
         'partition_nodes': 1,
         
-        'enable_hotspot': True,
+        'enable_hotspot': False,
         'hotspot_windows':[[0, 30]],
         'hotspot_nodes': [2],
         'hotspot_rates': [0.5],
     }
     node_params = {
-        'timeout_delay': 1_500,  # ms
+        'timeout_delay': 1_000,  # ms
         'header_size': 32,  # bytes
-        'max_header_delay': 4000,  # ms
-        'gc_depth': 5,  # rounds
+        'max_header_delay': 200,  # ms
+        'gc_depth': 50,  # rounds
         'sync_retry_delay': 1_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
-        'max_batch_delay': 4000,  # ms
+        'max_batch_delay': 200,  # ms
         'use_optimistic_tips': False,
         'use_parallel_proposals': True,
         'k': 1,
         'use_fast_path': True,
-        'fast_path_timeout': 20,
+        'fast_path_timeout': 100,
         'use_ride_share': False,
         'car_timeout': 2000,
         'cut_condition_type': 3,
 
-        'simulate_asynchrony': True,
-        'asynchrony_type': [6],
+        'simulate_asynchrony': False,
+        'asynchrony_type': [7],
 
         'asynchrony_start': [0], #ms
         'asynchrony_duration': [30_000], #ms
@@ -135,11 +135,11 @@ def remote(ctx, debug=True):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
-        'nodes': [10],
+        'nodes': [4],
         'workers': 1,
         'collocate': True,
         # 'rate': [170_000, 160_000],
-        'rate': [200_000],
+        'rate': [7_0000],
         'tx_size': 512,
         'duration': 120,
         'runs': 1,
@@ -150,28 +150,28 @@ def remote(ctx, debug=True):
         'partition_duration': 5,
         'partition_nodes': 2,
         
-        'enable_hotspot': True,
-        'hotspot_windows':[[0, 120]],
-        'hotspot_nodes': [5],
-        'hotspot_rates': [0.9],
+        'enable_hotspot': False,
+        'hotspot_windows':[[0, 30]],
+        'hotspot_nodes': [2],
+        'hotspot_rates': [0.5],
     }
     node_params = {
-        'timeout_delay': 1_500,  # ms
+        'timeout_delay': 1_000,  # ms
         'header_size': 32,  # bytes
-        'max_header_delay': 4000,  # ms
+        'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
-        'sync_retry_delay': 10_000,  # ms
+        'sync_retry_delay': 1_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
-        'max_batch_delay': 4000,  # ms
+        'max_batch_delay': 200,  # ms
         'use_optimistic_tips': False,
         'use_parallel_proposals': True,
         'k': 1,
-        'use_fast_path': False,
+        'use_fast_path': True,
         'fast_path_timeout': 200,
         'use_ride_share': False,
         'car_timeout': 2000,
-        'cut_condition_type': 4,
+        'cut_condition_type': 3,
 
         'simulate_asynchrony': False,
         'asynchrony_type': [6],

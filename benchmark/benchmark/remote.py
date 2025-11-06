@@ -70,6 +70,7 @@ class Bench:
             return
         Print.info('Installing rust and cloning the repo...')
         cmd = [
+            'sudo sed -i "/bullseye-backports/d" /etc/apt/sources.list',
             'sudo apt-get update',
             'sudo apt-get -y upgrade',
             'sudo apt-get -y autoremove',
