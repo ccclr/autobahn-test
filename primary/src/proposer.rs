@@ -128,14 +128,14 @@ impl Proposer {
         }*/
 
         let mut header = Header::new(
-                self.name,
-                self.height,
-                self.digests.drain(..).collect(),
-                self.last_parent.clone().unwrap(),
-                &mut self.signature_service,
-                self.consensus_instances.clone(),
-                self.num_active_instances,
-            ).await;
+            self.name,
+            self.height,
+            self.digests.drain(..).collect(),
+            self.last_parent.clone().unwrap(),
+            &mut self.signature_service,
+            self.consensus_instances.clone(),
+            self.num_active_instances,
+        ).await;
 
 
         if self.is_special {
@@ -145,7 +145,14 @@ impl Proposer {
         }
 
 
-        debug!("Created {:?}", header);
+        debug!(
+            "make_header: created local header id={:?}, author={:?}, height={}, payload_items={}, consensus_msgs={}",
+            header.id,
+            header.author,
+            header.height,
+            header.payload.len(),
+            header.consensus_messages.len()
+        );
 
         for (digest, _) in &header.consensus_messages {
            debug!("Header has {:?}", digest);
@@ -157,17 +164,16 @@ impl Proposer {
             info!("Created {} -> {:?}", header, digest);
         }
 
-        // Reset last parent
-        self.last_parent = None;
-        // Reset proposed consensus instances
-        self.consensus_instances.clear();
-        self.num_active_instances = 0;
-      
         // Send the new header to the `Core` that will broadcast and process it.
         self.tx_core
             .send(header)
             .await
             .expect("Failed to send header");
+
+        // Reset last parent and consensus state after sending
+        self.last_parent = None;
+        self.consensus_instances.clear();
+        self.num_active_instances = 0;
     }
 
     // Main loop listening to incoming messages.
@@ -239,7 +245,12 @@ impl Proposer {
 
                 // Receive own certificate from core (we are the author)
                 Some(parent) = self.rx_core.recv() => {
-                    debug!("   received parent from height {:?}", parent.height);
+                    debug!(
+                        "rx_core: received parent certificate at time_now, origin={:?}, height={}, header_digest={:?}",
+                        parent.origin(),
+                        parent.height,
+                        parent.header_digest
+                    );
 
                     if parent.height < self.height {
                         continue;

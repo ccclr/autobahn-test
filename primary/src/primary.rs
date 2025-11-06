@@ -222,6 +222,7 @@ impl Primary {
             parameters.egress_penalty,
             parameters.use_exponential_timeouts,
             tx_async,
+            vec!["10.146.0.26".to_string()].into_iter().collect(), // target_ip_addresses
         );
 
         Committer::spawn(committee.clone(), store.clone(), parameters.gc_depth, rx_mempool, rx_committer, rx_commit, tx_output, synchronizer);

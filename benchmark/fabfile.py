@@ -21,11 +21,11 @@ def local(ctx, debug=True):
     ''' Run benchmarks on localhost '''
     bench_params = {
         'faults': 0, 
-        'nodes': 10,
+        'nodes': 4,
         'workers': 1,
-        'rate': 10000,
+        'rate': 140000,
         'tx_size': 512,
-        'duration': 60,
+        'duration': 120,
 
         # Unused
         'simulate_partition': False,
@@ -33,14 +33,14 @@ def local(ctx, debug=True):
         'partition_duration': 5,
         'partition_nodes': 1,
         
-        'enable_hotspot': True,
-        'hotspot_windows':[[0, 60]],
+        'enable_hotspot': False,
+        'hotspot_windows':[[0, 30]],
         'hotspot_nodes': [2],
-        'hotspot_rates': [0],
+        'hotspot_rates': [0.5],
     }
     node_params = {
-        'timeout_delay': 3000,  # ms
-        'header_size': 1000,  # bytes
+        'timeout_delay': 1_000,  # ms
+        'header_size': 32,  # bytes
         'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
         'sync_retry_delay': 1_000,  # ms
@@ -51,23 +51,21 @@ def local(ctx, debug=True):
         'use_parallel_proposals': True,
         'k': 1,
         'use_fast_path': True,
-        'fast_path_timeout': 200,
-        'use_ride_share': True,
+        'fast_path_timeout': 100,
+        'use_ride_share': False,
         'car_timeout': 2000,
-        'cut_condition_type': 4,
+        'cut_condition_type': 3,
 
-        'simulate_asynchrony': True,
-        'asynchrony_type': [5],
+        'simulate_asynchrony': False,
+        'asynchrony_type': [7],
 
-        'asynchrony_start': [10], #ms
-        'asynchrony_duration': [40_000], #ms
-        'affected_nodes': [3],
-        'egress_penalty': 100, #ms
+        'asynchrony_start': [0], #ms
+        'asynchrony_duration': [30_000], #ms
+        'affected_nodes': [1],
+        'egress_penalty': 30, #ms
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,
-        
-        
     }
     try:
         ret = LocalBench(bench_params, node_params).run(debug)
@@ -137,51 +135,51 @@ def remote(ctx, debug=True):
     ''' Run benchmarks on AWS '''
     bench_params = {
         'faults': 0,
-        'nodes': [10],
+        'nodes': [4],
         'workers': 1,
         'collocate': True,
         # 'rate': [170_000, 160_000],
-        'rate': [100_000],
+        'rate': [7_0000],
         'tx_size': 512,
         'duration': 120,
-        'runs': 2,
+        'runs': 1,
 
-        # Unused
+        # Unused5
         'simulate_partition': False,
         'partition_start': 5,
         'partition_duration': 5,
         'partition_nodes': 2,
         
-        'enable_hotspot': True,
-        'hotspot_windows':[[0, 120]],
-        'hotspot_nodes': [5],
-        'hotspot_rates': [0],
+        'enable_hotspot': False,
+        'hotspot_windows':[[0, 30]],
+        'hotspot_nodes': [2],
+        'hotspot_rates': [0.5],
     }
     node_params = {
-        'timeout_delay': 1500,  # ms
-        'header_size': 1000,  # bytes
+        'timeout_delay': 1_000,  # ms
+        'header_size': 32,  # bytes
         'max_header_delay': 200,  # ms
         'gc_depth': 50,  # rounds
-        'sync_retry_delay': 10_000,  # ms
+        'sync_retry_delay': 1_000,  # ms
         'sync_retry_nodes': 4,  # number of nodes
         'batch_size': 500_000,  # bytes
         'max_batch_delay': 200,  # ms
-        'use_optimistic_tips': True,
+        'use_optimistic_tips': False,
         'use_parallel_proposals': True,
         'k': 1,
         'use_fast_path': True,
-        'fast_path_timeout': 100,
+        'fast_path_timeout': 200,
         'use_ride_share': False,
         'car_timeout': 2000,
-        'cut_condition_type': 4,
+        'cut_condition_type': 3,
 
-        'simulate_asynchrony': True,
+        'simulate_asynchrony': False,
         'asynchrony_type': [6],
 
-        'asynchrony_start': [30_000], #ms
-        'asynchrony_duration': [90_000], #ms
-        'affected_nodes': [3],
-        'egress_penalty': 100, #ms
+        'asynchrony_start': [0], #ms
+        'asynchrony_duration': [120_000], #ms
+        'affected_nodes': [1],
+        'egress_penalty': 90, #ms
 
         'use_fast_sync': True,
         'use_exponential_timeouts': True,
@@ -226,12 +224,14 @@ def logs(ctx):
     except ParseError as e:
         Print.error(BenchError('Failed to parse logs', e))
 
-
 @task
-def latency(ctx):
+def latency(ctx, intra_region=True):
     """
     Measure SSH latency (ms) between regions.
     Includes intra-region (i==j) and cross-region (i!=j) latency.
+    
+    Args:
+        intra_region: Whether to measure latency between all nodes within the same region
     """
     import time
     import numpy as np
@@ -244,7 +244,6 @@ def latency(ctx):
     manager = InstanceManager.make()
     settings = manager.settings
 
-    # 加载 SSH 私钥
     try:
         ctx.connect_kwargs.pkey = RSAKey.from_private_key_file("/home/ccclr0302/.ssh/google_compute_engine")
         connect_kwargs = ctx.connect_kwargs
@@ -252,21 +251,28 @@ def latency(ctx):
         Print.error(f"Failed to load SSH key: {e}")
         return
 
-    # 获取 hosts
     hosts_dict = manager.hosts()
+    
     region_nodes = []
-
+    all_nodes = []
+    
     for region, nodes in hosts_dict.items():
+        all_nodes.extend(nodes)
         if len(nodes) >= 2:
-            region_nodes.append((region, nodes[0], nodes[1]))  # (region, node1, node2)
+            region_nodes.append((region, nodes))  # (region, [node1, node2, ...])
         else:
+            region_nodes.append((region, nodes))
             Print.warn(f"[Skip] Region {region} has <2 nodes.")
 
     m = len(region_nodes)
     latency_matrix = np.zeros((m, m))
     region_names = [r[0] for r in region_nodes]
+    
+    if intra_region:
+        n_total = len(all_nodes)
+        full_latency_matrix = np.zeros((n_total, n_total))
+        node_names = all_nodes
 
-    # SSH latency 函数
     def ssh_latency(src, dst, repeat=3):
         if src == dst:
             return 0.0
@@ -286,41 +292,142 @@ def latency(ctx):
         valid = [x for x in results if not np.isnan(x)]
         return np.mean(valid) if valid else np.nan
 
-    # 1. Intra-region latency
-    for i in range(m):
-        region, node1, node2 = region_nodes[i]
-        latency = ssh_latency(node1, node2)
-        latency_matrix[i][i] = latency / 2 if latency else np.nan
-        print(f"[Intra] {region} ({node1} → {node2}): {latency_matrix[i][i]:.2f} ms")
+    if intra_region:
+        print("=== Measuring Intra-region Latency ===")
+        for i, (region, nodes) in enumerate(region_nodes):
+            if len(nodes) < 2:
+                continue
+                
+            print(f"\n[Region] {region}:")
+            for j, node1 in enumerate(nodes):
+                for k, node2 in enumerate(nodes):
+                    if j == k:
+                        continue
+                    
+                    idx1 = all_nodes.index(node1)
+                    idx2 = all_nodes.index(node2)
+                    
+                    latency = ssh_latency(node1, node2)
+                    full_latency_matrix[idx1][idx2] = latency if latency else np.nan
+                    
+                    if latency:
+                        print(f"  {node1} → {node2}: {latency:.2f} ms")
+                    else:
+                        print(f"  {node1} → {node2}: Failed")
+            
+            region_indices = [all_nodes.index(node) for node in nodes]
+            region_latencies = []
+            for j in region_indices:
+                for k in region_indices:
+                    if j != k and not np.isnan(full_latency_matrix[j][k]):
+                        region_latencies.append(full_latency_matrix[j][k])
+            
+            if region_latencies:
+                avg_latency = np.mean(region_latencies)
+                latency_matrix[i][i] = avg_latency
+                print(f"  [Average] {region}: {avg_latency:.2f} ms")
+            else:
+                latency_matrix[i][i] = np.nan
+    else:
+        print("=== Measuring Intra-region Latency (Simplified) ===")
+        for i in range(m):
+            region, nodes = region_nodes[i]
+            if len(nodes) < 2:
+                latency_matrix[i][i] = 0
+                continue
+                
+            node1, node2 = nodes[0], nodes[1]
+            latency = ssh_latency(node1, node2)
+            latency_matrix[i][i] = latency / 2 if latency else np.nan
+            print(f"[Intra] {region} ({node1} → {node2}): {latency_matrix[i][i]:.2f} ms")
 
-    # 2. Cross-region latency
+    print("\n=== Measuring Cross-region Latency ===")
     for i in range(m):
-        region_i, node_i, _ = region_nodes[i]
+        region_i, nodes_i = region_nodes[i]
         for j in range(m):
             if i == j:
                 continue
-            region_j, node_j, _ = region_nodes[j]
+            region_j, nodes_j = region_nodes[j]
+            
+            node_i = nodes_i[0]  
+            node_j = nodes_j[0]
+            
             latency = ssh_latency(node_i, node_j)
             latency_matrix[i][j] = latency if latency else np.nan
-            print(f"[Cross] {region_i} → {region_j}: {latency_matrix[i][j]:.2f} ms")
+            
+            if latency:
+                print(f"[Cross] {region_i} → {region_j}: {latency_matrix[i][j]:.2f} ms")
+            else:
+                print(f"[Cross] {region_i} → {region_j}: Failed")
         print()
 
-    print("\n=== SSH Latency Matrix (ms) ===")
+    print("\n=== Region Latency Matrix (ms) ===")
     print("Regions:", region_names)
     print(latency_matrix)
 
-    def average_latency(L):
-        vals = [L[i][j] for i in range(m) for j in range(m) if i != j and not np.isnan(L[i][j])]
-        return np.mean(vals)
+    if intra_region:
+        print(f"\n=== Full Node Latency Matrix (ms) ===")
+        print("Nodes:", node_names)
+        print(full_latency_matrix)
+        
+        def full_matrix_stats(matrix):
+            off_diagonal = [matrix[i][j] for i in range(len(matrix)) 
+                          for j in range(len(matrix)) if i != j and not np.isnan(matrix[i][j])]
+            
+            if not off_diagonal:
+                return None, None, None, None
+                
+            mean_latency = np.mean(off_diagonal)
+            std_latency = np.std(off_diagonal)
+            min_latency = np.min(off_diagonal)
+            max_latency = np.max(off_diagonal)
+            
+            return mean_latency, std_latency, min_latency, max_latency
+        
+        stats = full_matrix_stats(full_latency_matrix)
+        if stats[0] is not None:
+            mean_lat, std_lat, min_lat, max_lat = stats
+            print(f"\n=== Full Matrix Statistics ===")
+            print(f"Mean Latency: {mean_lat:.2f} ms")
+            print(f"Std Deviation: {std_lat:.2f} ms")
+            print(f"Min Latency: {min_lat:.2f} ms")
+            print(f"Max Latency: {max_lat:.2f} ms")
 
-    def asymmetry(L):
-        vals = [abs(L[i][j] - L[j][i]) / (L[i][j] + L[j][i])
-                for i in range(m) for j in range(m)
-                if i != j and not np.isnan(L[i][j]) and not np.isnan(L[j][i]) and (L[i][j] + L[j][i]) > 0]
-        return np.mean(vals)
+    def region_matrix_stats(L):
+        cross_region = [L[i][j] for i in range(m) for j in range(m) 
+                       if i != j and not np.isnan(L[i][j])]
+        
+        intra_region_vals = [L[i][i] for i in range(m) if not np.isnan(L[i][i])]
+        
+        cross_avg = np.mean(cross_region) if cross_region else np.nan
+        intra_avg = np.mean(intra_region_vals) if intra_region_vals else np.nan
+        
+        asymmetry_vals = [abs(L[i][j] - L[j][i]) / (L[i][j] + L[j][i])
+                         for i in range(m) for j in range(m)
+                         if i != j and not np.isnan(L[i][j]) and not np.isnan(L[j][i]) 
+                         and (L[i][j] + L[j][i]) > 0]
+        asymmetry = np.mean(asymmetry_vals) if asymmetry_vals else np.nan
+        
+        return cross_avg, intra_avg, asymmetry
 
-    mu = average_latency(latency_matrix)
-    asym = asymmetry(latency_matrix)
+    cross_avg, intra_avg, asym = region_matrix_stats(latency_matrix)
 
-    print(f"\nAverage SSH Latency (Cross-region): {mu:.2f} ms")
-    print(f"Asymmetry Degree: {asym:.4f}")
+    print(f"\n=== Region Matrix Statistics ===")
+    if not np.isnan(cross_avg):
+        print(f"Average Cross-region Latency: {cross_avg:.2f} ms")
+    if not np.isnan(intra_avg):
+        print(f"Average Intra-region Latency: {intra_avg:.2f} ms")
+    if not np.isnan(asym):
+        print(f"Asymmetry Degree: {asym:.4f}")
+
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    if intra_region:
+        np.save(f"latency_full_matrix_{timestamp}.npy", full_latency_matrix)
+        np.save(f"latency_region_matrix_{timestamp}.npy", latency_matrix)
+        print(f"\nResults saved to:")
+        print(f"  - latency_full_matrix_{timestamp}.npy")
+        print(f"  - latency_region_matrix_{timestamp}.npy")
+    else:
+        np.save(f"latency_region_matrix_{timestamp}.npy", latency_matrix)
+        print(f"\nResults saved to:")
+        print(f"  - latency_region_matrix_{timestamp}.npy")

@@ -70,6 +70,7 @@ class Bench:
             return
         Print.info('Installing rust and cloning the repo...')
         cmd = [
+            'sudo sed -i "/bullseye-backports/d" /etc/apt/sources.list',
             'sudo apt-get update',
             'sudo apt-get -y upgrade',
             'sudo apt-get -y autoremove',
@@ -77,6 +78,7 @@ class Bench:
             'sudo apt-get -y install build-essential',
             'sudo apt-get -y install cmake',
             'sudo apt-get -y install clang git curl',
+            'sudo apt-get install -y iperf3',
 
             'curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y',
             'source $HOME/.cargo/env',

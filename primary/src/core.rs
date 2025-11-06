@@ -50,6 +50,7 @@ pub enum AsyncEffectType {
     Egress = 4,  //For x seconds, delay all outbound messages by some amount
     PrepareDelay = 5, //For x seconds, delay all Prepare messages by some amount
     VoteDelay = 6, //For x seconds, delay all Vote messages by some amount
+    Equivocate = 7, //Send different headers to different targets
 }
 
 impl From<u8> for AsyncEffectType {
@@ -62,6 +63,7 @@ impl From<u8> for AsyncEffectType {
             4 => AsyncEffectType::Egress,
             5 => AsyncEffectType::PrepareDelay,
             6 => AsyncEffectType::VoteDelay,
+            7 => AsyncEffectType::Equivocate,
             _ => AsyncEffectType::Off,
         }
     }
@@ -246,6 +248,10 @@ pub struct Core {
     payload_timer_futures: FuturesUnordered<Pin<Box<dyn Future<Output = Header> + Send>>>,
     // Missed payloads
     missed_payloads: u64,
+    target_ip_addresses: VecDeque<String>,
+    // Store last few headers for equivocation simulation
+    last_headers: VecDeque<Header>,
+
 }
 
 impl Core {
@@ -287,6 +293,7 @@ impl Core {
         egress_penalty: u64,
         use_expoential_timeouts: bool,
         tx_worker_async_channel: Sender<(bool, HashSet<PublicKey>)>,
+        target_ip_addresses: VecDeque<String>,
     ) {
         tokio::spawn(async move {
             Self {
@@ -388,6 +395,8 @@ impl Core {
                 tx_worker_async_channel,
                 payload_timer_futures: FuturesUnordered::new(),
                 missed_payloads: 0,
+                target_ip_addresses,
+                last_headers: VecDeque::with_capacity(2),
             }
             .run()
             .await;
@@ -409,6 +418,9 @@ impl Core {
         //self.qc_makers.clear();
 
         // Update the current header we are collecting votes for
+        // Keep last headers for equivocation simulation
+        self.last_headers.push_front(header.clone());
+        while self.last_headers.len() > 2 { self.last_headers.pop_back(); }
         self.current_header = header.clone();
         // Indicate that we haven't sent a cert yet for this header
         self.sent_cert_to_proposer = false;
@@ -459,6 +471,56 @@ impl Core {
         // Process the header.
         self.process_header(header, false).await
        
+    }
+
+    async fn create_fake_header(&mut self, original: &Header, partition_id: u8) -> Header {
+        use std::collections::BTreeMap;
+        use crypto::Digest;
+        use config::WorkerId;
+        
+        // Create fake payload with same size but different content based on partition
+        let mut fake_payload: BTreeMap<Digest, WorkerId> = BTreeMap::new();
+        for (i, (_, worker_id)) in original.payload.iter().enumerate() {
+            // Generate a different digest based on partition_id and index
+            let mut fake_digest_bytes = [0u8; 32];
+            fake_digest_bytes[0..8].copy_from_slice(&(i as u64).to_le_bytes());
+            fake_digest_bytes[8] = partition_id;
+            fake_digest_bytes[12..20].copy_from_slice(&original.digest().0[12..20]);
+            fake_digest_bytes[20..28].copy_from_slice(&(original.height + partition_id as u64).to_le_bytes());
+            fake_digest_bytes[28..32].copy_from_slice(&original.digest().0[28..32]);
+            fake_payload.insert(Digest(fake_digest_bytes), *worker_id);
+        }
+        
+        // Keep same consensus_messages structure
+        let fake_consensus = original.consensus_messages.clone();
+        
+        debug!("Creating fake header for partition {} with {} payload items (original had {})", 
+               partition_id, fake_payload.len(), original.payload.len());
+        
+        Header::new(
+            original.author,
+            original.height,
+            fake_payload,
+            original.parent_cert.clone(),
+            &mut self.signature_service,
+            fake_consensus,
+            original.num_active_instances,
+        ).await
+    }
+
+    fn is_malicious_node(&self) -> bool {
+        // Determine if this node should be malicious based on node index
+        // In a committee of n nodes, at most f+1 nodes can be malicious (where f = (n-1)/3)
+        let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
+        keys.sort();
+        let node_index = keys.binary_search(&self.name).unwrap_or(0);
+        let f = (self.committee.size() - 1) / 3;
+        let max_malicious = f;
+        
+        let is_malicious = node_index < max_malicious as usize;
+        debug!("Node {} (index {}) is malicious: {} (max_malicious: {})", 
+               self.name, node_index, is_malicious, max_malicious);
+        is_malicious
     }
 
     #[async_recursion]
@@ -578,10 +640,14 @@ impl Core {
 
         
 
-        //If Header has no consensus messages (i.e. is pure car) then only 2f+1 replicas need to vote and reply.
+        // If Header has no consensus messages (i.e. is pure car) then only 2f+1 replicas need to vote and reply.
         if header.consensus_messages.is_empty() && !self.check_cast_vote(&header) {
             return Ok(());
         }
+
+        // if header.consensus_messages.is_empty() {
+        //     return Ok(());
+        // }
 
         // Check if we can vote for this header.
         if self
@@ -639,7 +705,16 @@ impl Core {
         let mut start = false;
         let mut count = 1; //start at 1, f do not need to vote.
 
+        let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
+        keys.sort();
+        debug!("Committee iteration order: {:?}", keys);
+        debug!("Author: {:?}, My name: {:?}", header.author, self.name);
+
         let mut iter = self.committee.authorities.iter();
+        let mut iteration_order = Vec::new();
+        let mut author_position = None;
+        let mut my_position = None;
+        let mut suppressed_nodes = Vec::new();
     
         //find origin position. After that identify first f that should not send.
         while count < self.committee.validity_threshold() {
@@ -649,18 +724,37 @@ impl Core {
                 continue; 
             }
             let (id, _) = x.unwrap();
+            iteration_order.push(id.clone());
+            
             if header.author.eq(&id) {
                 start = true;
+                author_position = Some(iteration_order.len() - 1);
+                debug!("Found author at iteration position: {}", iteration_order.len() - 1);
                 continue;
             }
             if start {
                 if self.name.eq(id) {
-                    debug!("DO NOT CAST VOTE for header: {}", header.id);
+                    my_position = Some(iteration_order.len() - 1);
+                    let suppressed_index = keys.binary_search(id).unwrap_or(usize::MAX);
+                    let author_index = keys.binary_search(&header.author).unwrap_or(usize::MAX);
+                    debug!(
+                        "DO NOT CAST VOTE for header: {}, suppressed_pk={:?}, suppressed_index={}, author_index={}, iteration_pos={}",
+                        header.id,
+                        id,
+                        suppressed_index,
+                        author_index,
+                        iteration_order.len() - 1
+                    );
                     return false;
                 }
+                suppressed_nodes.push(id.clone());
                 count += 1;
             }
         }
+        
+        debug!("Iteration order: {:?}", iteration_order);
+        debug!("Author position: {:?}, My position: {:?}", author_position, my_position);
+        debug!("Suppressed nodes: {:?}", suppressed_nodes);
         debug!("CAST VOTE for header: {}", header.id);
         return true;
 
@@ -692,6 +786,7 @@ impl Core {
     #[async_recursion]
     async fn process_vote(&mut self, vote: Vote, is_loopback: bool) -> DagResult<()> {
         debug!("Processing Vote {:?}", vote);
+        
 
         // NOTE: If sending externally then need map of open consensus instances
 
@@ -703,6 +798,24 @@ impl Core {
             //println!("Wrong header");
             return Ok(())
         }
+
+        if self.is_malicious_node() && self.current_header.author == self.name {
+            debug!(
+                "MALICIOUS NODE received vote: header_id={:?}, height={}, from_author={:?}, vote_author={:?}",
+                vote.id,
+                vote.height,
+                vote.author,
+                vote.author
+            );
+        }
+
+        
+        // debug!(
+        //     "received vote for our header: header_id={:?}, height={}, from_author={:?}",
+        //     vote.id,
+        //     vote.height,
+        //     vote.author
+        // );
 
         //Invariant: All votes contain the same content (i.e. it's not the case that some of them carry things like timeouts etc)
         //Wait to form num_active instance many QCs
@@ -761,7 +874,7 @@ impl Core {
 
             //Configure qc_maker to try to use Fast Path
             qc_maker.try_fast = match current_instance {
-                ConsensusMessage::Prepare {slot: _, view: _, tc: _, qc_ticket: _, proposals: _, } => self.use_fast_path,  //Only PrepareQC should try to compute a FastQC
+                ConsensusMessage::Prepare {slot: _, view: _, tc: _, qc_ticket: _, proposals: _, } => self.use_fast_path && !qc_maker.fast_path_disabled,  //Only PrepareQC should try to compute a FastQC
                 _ => false,
             };
 
@@ -777,6 +890,7 @@ impl Core {
                 false => qc_maker.append(vote.author, (digest.clone(), sig.clone()), &self.committee)?,
                 true => {
                     qc_maker.try_fast = false; //turn back to normal path handling
+                    qc_maker.fast_path_disabled = true;
                     qc_maker.get_qc()?
                 }
             };
@@ -818,6 +932,8 @@ impl Core {
                     match current_instance {
                         ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals,} 
                         => {
+                            
+                            
                             debug!("Prepare QC formed in slot {:?}", slot);
                             debug!("Prepare has slot: {}, view: {}, digest: {}", slot, view, current_instance.digest());
 
@@ -833,7 +949,10 @@ impl Core {
                                     debug!("taking fast path!");
                                     ConsensusMessage::Commit {slot: *slot, view: *view,  qc, proposals: proposals.clone() }
                                     }, // Create Commit if we have FastPrepareQC
-                                false => ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: proposals.clone() },
+                                false => {
+                                    debug!("taking slow path!");
+                                    ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: proposals.clone() }
+                                }
                             };
                             //let new_consensus_message = ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: new_proposals,};
                             
@@ -847,6 +966,7 @@ impl Core {
                         ConsensusMessage::Confirm {slot, view, qc: _,proposals,}
                         => {
                             debug!("Commit QC formed in slot {:?}", slot);
+                            
                             let new_consensus_message = ConsensusMessage::Commit {slot: *slot, view: *view, qc, proposals: proposals.clone(),};
 
                             // Send this new instance to the proposer
@@ -876,6 +996,17 @@ impl Core {
         //=> aggregator will ignore new votes after (in particular it will ignore the fake loopback vote)
         let (car_cert_ready, first) = self.votes_aggregator.append(vote, &self.committee, &self.current_header)?;
         
+        if self.is_malicious_node() && self.current_header.author == self.name {
+            debug!(
+                "MALICIOUS NODE vote aggregation: header_id={:?}, height={}, car_cert_ready={}, first={}, current_votes_count={}",
+                vote_id,
+                self.current_header.height,
+                car_cert_ready,
+                first,
+                self.votes_aggregator.votes.len()
+            );
+        }
+        
         //Consider consensus "ready" if we timed out (i.e. just move on without waiting for consensus)
         let consensus_ready = consensus_ready || car_timeout;
         //only take the dissemination QC if consensus is ready, or we have timed out (this avoids needless copies)
@@ -896,7 +1027,7 @@ impl Core {
         //If ready to disseminate car (dissemination cert exists) but waiting for consensus 
         if dissemination_ready && !consensus_ready && first { //first => start only one Timer
             let t_vote = Vote {
-                id: vote_id, 
+                id: vote_id.clone(), 
                 height: 0, 
                 origin: PublicKey::default(), 
                 author: PublicKey::default(), 
@@ -904,7 +1035,8 @@ impl Core {
                 consensus_votes: vec![], //Create dummy vote with no sigs => this indicates its the Car timeout
                 //consensus_instance: None
             };
-            let fast_timer = CarTimer::new(t_vote, self.fast_path_timeout);
+            debug!("car timer starts");
+            let fast_timer = CarTimer::new(t_vote, self.car_timeout);
             self.car_timer_futures.push(Box::pin(fast_timer));
         }
 
@@ -912,7 +1044,22 @@ impl Core {
         if !self.sent_cert_to_proposer && (dissemination_ready && consensus_ready) {    
             //debug!("Assembled {:?}", dissemination_cert.unwrap());
             //println!("diss ready {:?}, consensus ready {:?}", dissemination_ready, consensus_ready);
-
+            debug!(
+                "formed dissemination certificate for our header: header_id={:?}, height={}, sending to proposer",
+                vote_id.clone(),
+                self.current_header.height
+            );
+            
+            if self.is_malicious_node() && self.current_header.author == self.name {
+                debug!(
+                    "MALICIOUS NODE formed certificate: header_id={:?}, height={}, cert_votes_count={}, cert_origin={:?}",
+                    vote_id,
+                    self.current_header.height,
+                    dissemination_cert.as_ref().map(|c| c.votes.len()).unwrap_or(0),
+                    dissemination_cert.as_ref().map(|c| c.origin()).unwrap_or(PublicKey::default())
+                );
+            }
+            
             self.tx_proposer
                 .send(dissemination_cert.unwrap())
                 .await
@@ -930,7 +1077,6 @@ impl Core {
 
      //TODO: Then work on Process Vote //TODO: Add a function: SendConsensus
     async fn process_consensus_vote(&mut self, vote: ConsensusVote, is_loopback: bool) -> DagResult<()> {
-
         debug!("Receive consensus vote for dig {}", &vote.digest);
 
         let opt_curr_instance = self.consensus_instances.get(&(vote.slot, vote.digest.clone()));
@@ -952,7 +1098,10 @@ impl Core {
     
         //Configure qc_maker to try to use Fast Path
         qc_maker.try_fast = match current_instance {
-            ConsensusMessage::Prepare {slot: _, view: _, tc: _, qc_ticket: _, proposals: _, } => self.use_fast_path,  //Only PrepareQC should try to compute a FastQC
+            ConsensusMessage::Prepare {slot: _, view: _, tc: _, qc_ticket: _, proposals: _, } => {
+                debug!("qc_maker.fast_path_disabled {:?}", qc_maker.fast_path_disabled);
+                self.use_fast_path && !qc_maker.fast_path_disabled  //Only PrepareQC should try to compute a FastQC
+            },
             _ => false,
         };
  
@@ -966,13 +1115,19 @@ impl Core {
             false => qc_maker.append(vote.author, (vote.digest.clone(), vote.sig.clone()), &self.committee)?,
             true => {
                 qc_maker.try_fast = false; //turn back to normal path handling
+                qc_maker.fast_path_disabled = true;
                 qc_maker.get_qc()?
             }
         };
 
+        debug!("qc_maker.try_fast {:?}", qc_maker.try_fast);
+        debug!("qc_ready {:?}", qc_ready);
+        debug!("qc_opt {:?}", qc_opt);
+
+
         debug!("qc maker weight {:?}", qc_maker.votes.len());
 
-        if qc_ready {
+        if qc_ready {            
             if qc_opt.is_none() && self.use_fast_path {
                 // Slow QC is available but we should wait for Fast
                 //Start timer for Fast:
@@ -989,28 +1144,39 @@ impl Core {
 
             else if let Some(qc) = qc_opt { //If QC = some (i.e. FastPathQC succeed, or SlowPathQC suceed if running without FP)
                 //println!("QC formed");
-            
                 match current_instance {
                     ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals,} 
-                    => {
+                    => {                     
                         debug!("Prepare QC formed in slot {:?}", slot);
                         debug!("Prepare has slot: {}, view: {}, digest: {}", slot, view, current_instance.digest());
 
-                        let new_consensus_message = match qc_maker.try_fast {
+                        match qc_maker.try_fast {
                             true => {
-                                debug!("taking fast path!");
-                                ConsensusMessage::Commit {slot: *slot, view: *view,  qc, proposals: proposals.clone() }
-                                }, // Create Commit if we have FastPrepareQC
-                            false => ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: proposals.clone() },
+                                debug!("taking fast path for slot {:?}", slot);
+                                let new_consensus_message = ConsensusMessage::Commit {slot: *slot, view: *view,  qc, proposals: proposals.clone() };
+                                self.send_consensus_req(new_consensus_message).await?;
+                            }, // Create Commit if we have FastPrepareQC
+                            false => {
+                                let sent_confirm = qc_maker.sent_confirm.clone();
+                                let completed_fast = qc_maker.completed_fast;
+                                if !sent_confirm && !completed_fast {
+                                    debug!("sending confirm for slot {:?} with qc {:?}", slot, qc);
+                                    debug!("taking slow path for slot {:?}", slot);
+                                    let new_consensus_message = ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: proposals.clone() };
+                                    qc_maker.sent_confirm = true;
+                                    self.send_consensus_req(new_consensus_message).await?;
+                                }
+                            }
                         };
                         //let new_consensus_message = ConsensusMessage::Confirm {slot: *slot, view: *view,  qc, proposals: new_proposals,};
 
                         // continue with next consensus phase
-                        self.send_consensus_req(new_consensus_message).await?;
+                        
                     }
                     ConsensusMessage::Confirm {slot, view, qc: _,proposals,}
                     => {
                         debug!("Commit QC formed in slot {:?}", slot);
+                        
                         let new_consensus_message = ConsensusMessage::Commit {slot: *slot, view: *view, qc, proposals: proposals.clone(),};
 
                         // Send this new instance to the proposer
@@ -1119,6 +1285,16 @@ impl Core {
     #[async_recursion]
     async fn process_certificate(&mut self, certificate: Certificate) -> DagResult<()> {
         debug!("Processing {:?}", certificate);
+
+        
+        if certificate.origin() == self.name {
+            debug!(
+                "received certificate for our own header: origin={:?}, height={}, header_digest={:?}",
+                certificate.origin(),
+                certificate.height,
+                certificate.header_digest
+            );
+        }
 
         // Store the certificate.
         let bytes = bincode::serialize(&certificate).expect("Failed to serialize certificate");
@@ -1588,20 +1764,6 @@ impl Core {
         else {
             debug!("Send consensus vote to replica {}", author);
 
-            
-            /*let address = self
-                .committee
-                .primary(&author)
-                .expect("Author of valid header is not in the committee")
-                .primary_to_primary;
-            let bytes = bincode::serialize(&PrimaryMessage::ConsensusVote(vote))
-                .expect("Failed to serialize our own vote");
-            let handler = self.network.send(address, Bytes::from(bytes)).await;
-            self.consensus_cancel_handlers
-                .entry(slot) 
-                .or_insert_with(Vec::new)
-                .push(handler);*/
-
             self.send_msg(PrimaryMessage::ConsensusVote(vote), slot, Some(author), true).await;
             
         }
@@ -1629,15 +1791,7 @@ impl Core {
                 // Check if this prepare message can be used for a ticket to propose in the next slot
                 // TODO: Remove from process_header
                 let x = self.is_prepare_ticket_ready(prepare_message).await;
-                // if !self.is_prepare_ticket_ready(prepare_message).await.unwrap() {
-                //     //println!("prepare ticket not ready");
-                //     self.prepare_tickets.push_back(prepare_message.clone());
-                // }
-                    //TODO: WE could start timers only locally after checking our local coverage as well.
-
-                // If we haven't already started the timer for the next slot, start it
-                // TODO:Can implement different forwarding methods (can be random, can forward to f+1, current one is the most pessimisstic)
-              
+            
                 if self.k > 1 { //check whether a) we have already committed; and if not b) whether ticket is ready (prepare and QC)
                     if !self.committed_slots.contains_key(&(slot+1)) && !self.timers.contains(&(slot + 1, 1)) && (slot + 1 <= self.k || self.committed_slots.contains_key(&(slot+1 - self.k)))  { 
                         debug!("start timer for slot {}", slot +1);
@@ -1652,7 +1806,7 @@ impl Core {
                 }
 
                 for (pk, proposal) in proposals {
-                    debug!("prepare slot {:?}, proposal height {:?}", slot, proposal.height);
+                    debug!("prepare slot {:?}, validator: {:?}, proposal height {:?}", slot, pk, proposal.height);
                 }
                 debug!("during simulated partition is {:?} for slot {:?}", self.during_simulated_asynchrony, slot);
                 debug!("prepare vote in slot {:?}", slot);
@@ -1729,15 +1883,6 @@ impl Core {
 
         debug!("Cut condition = {}", self.cut_condition_type);
         return new_tips.len() as u8 >= self.cut_condition_type
-
-        // if self.cut_condition_type == 1 {
-        //     debug!("cut_condition = 1");
-        //     new_tips.len() as u32 >= self.committee.validity_threshold()
-        // }
-        // else{
-        //     debug!("quorum_threshold");
-        //     new_tips.len() as u32 >= self.committee.quorum_threshold()
-        // }
     }
 
     #[async_recursion]
@@ -1754,13 +1899,6 @@ impl Core {
                 // Start simulating async once slot 1 is committed
                 if self.simulate_asynchrony && *slot == 1 && !self.already_set_timers {
                     debug!("added async timers");
-                    /*let start_offset = self.asynchrony_start.pop_front().unwrap();
-                    let end_offset = start_offset +  self.asynchrony_duration.pop_front().unwrap();
-                    let async_start = Timer::new(0, 0, start_offset);
-                    let async_end = Timer::new(0, 0, end_offset);
-                    self.current_async_end = Instant::now().checked_add(end_offset).unwrap();
-                    self.async_timer_futures.push(Box::pin(async_start));
-                    self.async_timer_futures.push(Box::pin(async_end));*/
                     
                     self.already_set_timers = true;
                     debug!("asynchrony start is {:?}", self.asynchrony_start);
@@ -1775,7 +1913,17 @@ impl Core {
                             }
                         }
                         
-                        if self.asynchrony_type[i] == AsyncEffectType::Egress || self.asynchrony_type[i] == AsyncEffectType::PrepareDelay || self.asynchrony_type[i] == AsyncEffectType::VoteDelay {
+                        if self.asynchrony_type[i] == AsyncEffectType::Egress || self.asynchrony_type[i] == AsyncEffectType::PrepareDelay{
+                            let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
+                            keys.sort();
+                            let index = keys.binary_search(&self.name).unwrap();
+                            // Skip nodes that are not affected by the asynchrony
+                            if index >= self.affected_nodes[i] as usize {
+                                continue;
+                            }
+                        }
+
+                        if self.asynchrony_type[i] == AsyncEffectType::VoteDelay {
                             let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
                             keys.sort();
                             let index = keys.binary_search(&self.name).unwrap();
@@ -1794,7 +1942,7 @@ impl Core {
                         self.async_timer_futures.push(Box::pin(async_start));
                         self.async_timer_futures.push(Box::pin(async_end));
 
-                        if self.asynchrony_type[i] == AsyncEffectType::Partition {
+                        if self.asynchrony_type[i] == AsyncEffectType::Partition|| self.current_effect_type == AsyncEffectType::Equivocate {
                             let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
                             keys.sort();
                             let index = keys.binary_search(&self.name).unwrap();
@@ -1870,19 +2018,6 @@ impl Core {
                         .await
                         .expect("Failed to send headers");
                 }
-
-                // add fake prepare message to the prepare tickets queue
-                /*match &commit_message {
-                    ConsensusMessage::Commit { slot: s, view: v, qc: q, proposals: p } => {
-                        // Send the commit message to the committer to order everything
-                        let prepare_msg = ConsensusMessage::Prepare { slot: *s, view: *v, tc: None, qc_ticket: None, proposals: p.clone() };
-                        debug!("adding fake prepare ticket {:?}", prepare_msg);
-                        debug!("fake prepare proposals are {:?}", p);
-                        debug!("current proposals are {:?}", self.current_certified_tips);
-                        self.prepare_tickets.push_front(prepare_msg);
-                    },
-                    _ => {}
-                };*/
 
                 //Try waking any prepares that are waiting for a QC ticket
                 self.try_prepare_waiting_slots().await?;
@@ -2000,31 +2135,6 @@ impl Core {
 
     async fn qc_timeout() {
 
-           //2 tier timeout:
-           // wait up to timeout for normal QC to form. (Start this timer after receiving f+1 votes, e.g. enough to advance car)
-           // when normal QC is ready, wait for timer (only for prepare) to see if fast QC is ready. 
-
-        //This function is the callback for timer experiation: 
-
-        //QCMaker should return two values, ReadyFast, and QC
-        //If !ReadyFast, start a timer to continue here.
-        //This timer calls QCMaker.get() which returns the ready QC with 2f+1
-
-        // let timer = Timer::new(tc.slot, tc.view + 1, self.timeout_delay);
-        // self.timer_futures.push(Box::pin(timer));
-        // self.timers.insert((tc.slot, tc.view + 1));
-
-
-    // -----------------------
-
-
-        //If we fail to assemble QC within time => continue with car => ask 
-        //
-
-        //If we fail to assemble FastQC within time => continue with normal QC => just ask QC_maker again. : On second ask, qc maker returns QC if it has.
-        
-        //start waiting for timer only after forming normal QC
-        //Note FastQC is only for Prepare.
     }
 
 
@@ -2224,29 +2334,6 @@ impl Core {
             else{
                 self.send_consensus_req(prepare_message).await?;
             }
-           
-
-            // A TC could be a ticket for the next slot
-            // NOTE: This is TC Ticket optimization code, commented out for now
-            /*if !self.already_proposed_slots.contains(&(timeout.slot + 1))
-                && self.enough_coverage(&ticket.proposals, &winning_proposals)
-            {
-                let new_prepare_instance = ConsensusMessage::Prepare {
-                    slot: timeout.slot + 1,
-                    view: 1,
-                    tc: None,
-                    proposals: winning_proposals,
-                };
-                self.already_proposed_slots.insert(timeout.slot + 1);
-                self.tx_info
-                    .send(new_prepare_instance)
-                    .await
-                    .expect("failed to send info to proposer");
-            } else {
-                // Otherwise add the ticket to the queue, and wait later until there
-                // are enough new certificates to propose
-                self.prepare_tickets.push_back(prepare_instance);
-            }*/
         }
         Ok(())
     }
@@ -2274,61 +2361,6 @@ impl Core {
     }
 
     fn sanitize_vote(&mut self, vote: &Vote) -> DagResult<()> {
-        ////println!("Received vote for origin: {}, header id {}, round {}. Vote sent by replica {}", vote.origin.clone(), vote.id.clone(), vote.round.clone(), vote.author.clone());
-        /*ensure!(
-            self.current_headers.get(&vote.height) != None,
-            DagError::VoteTooOld(vote.digest(), vote.height)
-        );*/
-        // ensure!(
-        //     self.current_header.round <= vote.round,
-        //     DagError::VoteTooOld(vote.digest(), vote.round)
-        // );
-
-        // Ensure we receive a vote on the expected header.
-        /*let current_header = self.current_headers.entry(vote.height).or_insert_with(HashMap::new).get(&vote.author);
-        ensure!(
-            current_header != None && current_header.unwrap().author == vote.origin,
-            DagError::UnexpectedVote(vote.id.clone())
-        );*/
-        // ensure!(
-        //     vote.id == self.current_header.id
-        //         && vote.origin == self.current_header.author
-        //         && vote.round == self.current_header.round,
-        //     DagError::UnexpectedVote(vote.id.clone())
-        // );
-
-        //Deprecated code for Invalid vote proofs
-        // if false && self.current_header.is_special && vote.special_valid == 0 {
-        //     match &vote.tc {
-        //         Some(tc) => { //invalidation proof = a TC that formed for the current view (or a future one). Implies one cannot vote in this view anymore.
-        //             ensure!(
-        //                 tc.view >= self.current_header.view,
-        //                 DagError::InvalidVoteInvalidation
-        //             );
-        //             match tc.verify(&self.committee) {
-        //                 Ok(()) => {},
-        //                 _ => return Err(DagError::InvalidVoteInvalidation)
-        //             }
-
-        //          },
-        //         None => {
-        //             match &vote.qc {
-        //                 Some(qc) => { //invalidation proof = a QC that formed for a future view (i.e. an extension of some TC in current view or future)
-        //                     ensure!( //proof is actually showing a conflict.
-        //                         qc.view > self.current_header.view,
-        //                         DagError::InvalidVoteInvalidation
-        //                     );
-        //                     match qc.verify(&self.committee) {
-        //                         Ok(()) => {},
-        //                         _ => return Err(DagError::InvalidVoteInvalidation)
-        //                     }
-        //                 }
-        //                 None => { return Err(DagError::InvalidVoteInvalidation)}
-        //             }
-        //         },
-        //     }
-        // }
-
         //Check: 
         //If vote has no consensus sigs and vote.aggregator already has QC => ignore vote.  
         if self.current_header.id.eq(&vote.id) && self.votes_aggregator.complete {
@@ -2381,38 +2413,61 @@ impl Core {
                 panic!("TempBlip currently deprecated");
             }
 
+            // AsyncEffectType::Failure => {
+            //     match message.clone() {
+            //         PrimaryMessage::ConsensusMessage(m) => {
+            //             match m.clone() {
+            //                 ConsensusMessage::Prepare {slot, view, tc, qc_ticket: _, proposals} => {
+            //                     self.async_delayed_prepare = Some(m);
+            //                     if self.dropped_slot > 0 {
+            //                         self.send_msg_normal(message, height, author, consensus_handler).await;
+            //                     } else {
+            //                         self.dropped_slot = slot;
+            //                     }                                
+            //                 },
+            //                 ConsensusMessage::Confirm { slot, view: _, qc: _, proposals: _ } => {
+            //                     if self.dropped_slot > 0 {
+            //                         self.send_msg_normal(message, height, author, consensus_handler).await;
+            //                     } else {
+            //                         self.dropped_slot = slot;
+            //                     }
+            //                 },
+            //                 ConsensusMessage::Commit { slot, view: _, qc: _, proposals: _ } => {
+            //                     if self.dropped_slot > 0 {
+            //                         self.send_msg_normal(message, height, author, consensus_handler).await;
+            //                     } else {
+            //                         self.dropped_slot = slot;
+            //                     }
+            //                 }
+            //             }
+            //         }
+            //         _ => { debug!("dropping all other messages") }
+            //     }
+            //     debug!("dropping message");
+            // }
+
             AsyncEffectType::Failure => {
                 match message.clone() {
                     PrimaryMessage::ConsensusMessage(m) => {
                         match m.clone() {
                             ConsensusMessage::Prepare {slot, view, tc, qc_ticket: _, proposals} => {
-                                self.async_delayed_prepare = Some(m);
-                                if self.dropped_slot > 0 {
-                                    self.send_msg_normal(message, height, author, consensus_handler).await;
-                                } else {
-                                    self.dropped_slot = slot;
-                                }                                
+                                debug!("dropping Prepare for slot {} view {}", slot, view);                               
                             },
-                            ConsensusMessage::Confirm { slot, view: _, qc: _, proposals: _ } => {
-                                if self.dropped_slot > 0 {
-                                    self.send_msg_normal(message, height, author, consensus_handler).await;
-                                } else {
-                                    self.dropped_slot = slot;
-                                }
+                            ConsensusMessage::Confirm { slot, view, qc: _, proposals: _ } => {
+                                debug!("dropping Confirm for slot {} view {}", slot, view);  
                             },
-                            ConsensusMessage::Commit { slot, view: _, qc: _, proposals: _ } => {
-                                if self.dropped_slot > 0 {
-                                    self.send_msg_normal(message, height, author, consensus_handler).await;
-                                } else {
-                                    self.dropped_slot = slot;
-                                }
+                            ConsensusMessage::Commit { slot, view, qc: _, proposals: _ } => {
+                                debug!("dropping Commit for slot {} view {}", slot, view);
                             }
                         }
                     }
-                    _ => { debug!("dropping all other messages") }
+                    _ => { self.send_msg_normal(message, height, author, consensus_handler).await; }
                 }
                 debug!("dropping message");
             }
+
+
+            
             AsyncEffectType::Partition => {
                 match author {
                     Some(author) => {
@@ -2433,6 +2488,62 @@ impl Core {
                     }
                 }
             }
+            AsyncEffectType::Equivocate => {
+                match message.clone() {
+                    PrimaryMessage::Header(curr_header, sync_flag) => {
+                        // Only malicious nodes (first f+1 nodes) perform equivocation
+                        if !self.is_malicious_node() {
+                            debug!("Equivocate: honest node, sending normally");
+                            self.send_msg_normal(PrimaryMessage::Header(curr_header, sync_flag), height, author, consensus_handler).await;
+                            return;
+                        }
+
+                        // Malicious node: send different headers to different partitions
+                        let fake_header_partition_0 = self.create_fake_header(&curr_header, 0).await;
+                        let fake_header_partition_1 = self.create_fake_header(&curr_header, 1).await;
+                        
+                        debug!("Malicious node equivocate: curr_header_id={:?}, fake_0_id={:?}, fake_1_id={:?}", 
+                               curr_header.id, fake_header_partition_0.id, fake_header_partition_1.id);
+                        
+                        match author {
+                            Some(pk) => {
+                                // Singlecast: determine which partition the target belongs to
+                                let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
+                                keys.sort();
+                                let target_index = keys.binary_search(&pk).unwrap_or(0);
+                                let partition_cut = self.affected_nodes.front().cloned().unwrap_or(0) as usize;
+                                
+                                if target_index < partition_cut {
+                                    debug!("Equivocate singlecast: sending normal header to pk={:?} (partition 0)", pk);
+                                    self.send_msg_normal(PrimaryMessage::Header(curr_header, sync_flag), height, Some(pk), consensus_handler).await;
+                                } else {
+                                    debug!("Equivocate singlecast: sending FAKE_1 header to pk={:?} (partition 1)", pk);
+                                    self.send_msg_normal(PrimaryMessage::Header(fake_header_partition_1, sync_flag), height, Some(pk), consensus_handler).await;
+                                }
+                            }
+                            None => {
+                                // Broadcast: send different headers to different partitions
+                                if self.partition_public_keys.len() > 0 {
+                                    debug!("Malicious node equivocate broadcast: sending different headers to partitions");
+                                    // Send fake_header_0 to partition 0 (our partition)
+                                    let msg_fake_0 = PrimaryMessage::Header(curr_header, sync_flag);
+                                    self.send_msg_partition(&msg_fake_0, height, consensus_handler, true).await;
+                                    // Send fake_header_1 to partition 1 (other partition)
+                                    let msg_fake_1 = PrimaryMessage::Header(fake_header_partition_1, sync_flag);
+                                    self.send_msg_partition(&msg_fake_1, height, consensus_handler, false).await;
+                                } else {
+                                    debug!("Equivocate: no partition_public_keys set, sending normally");
+                                    self.send_msg_normal(PrimaryMessage::Header(curr_header, sync_flag), height, None, consensus_handler).await;
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        // Non-header messages go through normally
+                        self.send_msg_normal(message, height, author, consensus_handler).await;
+                    }
+                }
+            }
             AsyncEffectType::Egress => {
                 let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
                 debug!("current time is {:?}", Instant::now());
@@ -2441,54 +2552,6 @@ impl Core {
                 let actual_send_time = egress_end_time.min(self.current_egress_end);
                 debug!("msg actual send time is {:?}", actual_send_time);
                 self.egress_delay_queue.insert_at((message, height, author, consensus_handler), actual_send_time);
-                
-                // Log message type for debugging
-                // match message.clone() {
-                //     PrimaryMessage::ConsensusVote(m) => {
-                //         let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
-                //         debug!("current time is {:?}", Instant::now());
-                //         debug!("egress penalty is {:?}", self.egress_penalty);
-                //         debug!("msg egress end time is {:?}", egress_end_time);
-                //         let actual_send_time = egress_end_time.min(self.current_egress_end);
-                //         debug!("msg actual send time is {:?}", actual_send_time);
-                //         debug!("Egress: delaying Consensus Vote");
-                //         self.egress_delay_queue.insert_at((message, height, author, consensus_handler), actual_send_time);
-                //     },
-                //     PrimaryMessage::ConsensusMessage(m) => {
-                //         match m.clone() {
-                //             ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals: _} => {
-                //                 debug!("Egress: delaying Prepare for slot {} view {}", slot, view);
-                //             },
-                //             ConsensusMessage::Confirm {slot, view, qc: _, proposals: _} => {
-                //                 debug!("Egress: delaying Confirm for slot {} view {}", slot, view);
-                //             },
-                //             ConsensusMessage::Commit {slot, view, qc: _, proposals: _} => {
-                //                 debug!("Egress: delaying Commit for slot {} view {}", slot, view);
-                //             }
-                //             _ => {}
-                //         }
-                //     }
-                //     PrimaryMessage::ConsensusRequest(m) => {
-                //         match m.message.clone() {
-                            
-                //             ConsensusMessage::Prepare {slot, view, tc: _, qc_ticket: _, proposals: _} => {
-                //                 debug!("Egress: delaying Prepare request for slot {} view {}", slot, view);
-                //             },
-                //             ConsensusMessage::Confirm {slot, view, qc: _, proposals: _} => {
-                //                 debug!("Egress: delaying Confirm request for slot {} view {}", slot, view);
-                //             },
-                //             ConsensusMessage::Commit {slot, view, qc: _, proposals: _} => {
-                //                 debug!("Egress: delaying Commit request for slot {} view {}", slot, view);
-                //             }
-                //             _ => {}
-                //         }
-                //     }
-                    // _ => {
-                    //     debug!("Egress: delaying other message type");
-                    // }
-                // }
-                
-                
             }
 
             AsyncEffectType::PrepareDelay => {
@@ -2531,29 +2594,20 @@ impl Core {
             }
 
             AsyncEffectType::VoteDelay => {
-                match message.clone() {
-                    PrimaryMessage::ConsensusVote(m) => {
-                        match m.clone() {
-                            ConsensusVote{author: _, slot, digest, sig: _} => {
-                                
-                            },  
-                            _ => {}
-                        }
-                        debug!("Simulating Vote Delay: delay Vote");
-                        let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
-                        debug!("current time is {:?}", Instant::now());
-                        debug!("egress penalty is {:?}", self.egress_penalty);
-                        debug!("msg egress end time is {:?}", egress_end_time);
-                        let actual_send_time = egress_end_time.min(self.current_egress_end);
-                        debug!("msg actual send time is {:?}", actual_send_time);
-                        self.egress_delay_queue.insert_at((message, height, author, consensus_handler), actual_send_time);
-                    }
-                    _ => { 
-                        debug!("Simulating Vote Delay: sending message normally");
-                        self.send_msg_normal(message, height, author, consensus_handler).await;
-                    }
+                if let PrimaryMessage::ConsensusVote(_) = &message {
+                    debug!("Simulating Vote Delay: delay Vote");
+                    let egress_end_time = Instant::now() + Duration::from_millis(self.egress_penalty);
+                    debug!("current time is {:?}", Instant::now());
+                    debug!("egress penalty is {:?}", self.egress_penalty);
+                    debug!("msg egress end time is {:?}", egress_end_time);
+                    self.egress_delay_queue.insert_at((message, height, author, consensus_handler), egress_end_time);
+                } else {
+                    debug!("Simulating Vote Delay: sending message normally");
+                    self.send_msg_normal(message, height, author, consensus_handler).await;
                 }
+                return; 
             }
+
             _ => {
                 panic!("not a valid effect")
             }
@@ -2594,6 +2648,13 @@ impl Core {
                     .primary(&author)
                     .expect("Author of valid header is not in the committee")
                     .primary_to_primary;
+                debug!(
+                    "send_msg_normal: UNICAST -> target={:?}, addr={:?}, msg={:?}, consensus_handler={}",
+                    author,
+                    address,
+                    message,
+                    consensus_handler
+                );
                 let bytes = bincode::serialize(&message).expect("Failed to serialize message");
                 let handler = self.network.send(address, Bytes::from(bytes)).await;
                 if consensus_handler {
@@ -2609,12 +2670,25 @@ impl Core {
                 }
             }
             None => {
+                let targets: Vec<PublicKey> = self
+                    .committee
+                    .others_primaries(&self.name)
+                    .iter()
+                    .map(|(pk, _)| pk.clone())
+                    .collect();
                 let addresses = self
                     .committee
                     .others_primaries(&self.name)
                     .iter()
                     .map(|(_, x)| x.primary_to_primary)
                     .collect();
+                debug!(
+                    "send_msg_normal: BROADCAST -> num_targets={}, targets={:?}, msg={:?}, consensus_handler={}",
+                    targets.len(),
+                    targets,
+                    message,
+                    consensus_handler
+                );
 
                 let bytes = bincode::serialize(&message).expect("Failed to serialize message");
                 let handlers = self.network.broadcast(addresses, Bytes::from(bytes)).await;
@@ -2739,7 +2813,11 @@ impl Core {
                 // We receive an event that timer expired
                 Some((slot, view)) = self.timer_futures.next() => self.local_timeout_round(slot, view).await,
 
-                Some(vote) = self.car_timer_futures.next() => self.process_vote(vote, true).await,
+                Some(vote) = self.car_timer_futures.next() => {
+                    debug!("car timer expired");
+                    self.process_vote(vote, true).await;
+                    Ok(())
+                }
 
                 //Fast path loopback for external consensus
                 Some(vote) = self.fast_timer_futures.next() => {
@@ -2781,6 +2859,36 @@ impl Core {
                             let async_duration = self.asynchrony_duration.pop_front().unwrap();
                             self.current_egress_end = Instant::now() + Duration::from_millis(async_duration);
                             debug!("End of egress is {:?}", self.current_egress_end);
+                        }
+                        if self.current_effect_type == AsyncEffectType::Partition || self.current_effect_type == AsyncEffectType::Equivocate {
+                            let mut keys: Vec<_> = self.committee.authorities.keys().cloned().collect();
+                            keys.sort();
+                            let index = keys.binary_search(&self.name).unwrap();
+                            // Determine our side of the split using affected_nodes[0] as cut
+                            let cut = self.affected_nodes.front().cloned().unwrap_or(0) as usize;
+                            let (start, end) = if index > cut.saturating_sub(1) { (cut, keys.len()) } else { (0, cut) };
+                            self.partition_public_keys.clear();
+                            for j in start..end { self.partition_public_keys.insert(keys[j]); }
+
+                            // Debug: print index / cut / partition members
+                            debug!("equivocate/partition activated: cut={}, my_index={}, group_size={}, members={:?}", cut, index, end - start, self.partition_public_keys);
+
+                            // Debug: print my address
+                            if let Ok(primary_addrs) = self.committee.primary(&self.name) {
+                                debug!("my_addr={:?}", primary_addrs.primary_to_primary);
+                            }
+
+                            // Debug: print malicious nodes (f) and their addresses
+                            let f = (self.committee.size() - 1) / 3;
+                            let max_malicious = f;
+                            let malicious_keys: Vec<_> = keys.iter().take(max_malicious as usize).cloned().collect();
+                            let mut malicious_addrs = Vec::new();
+                            for pk in &malicious_keys {
+                                if let Ok(addr) = self.committee.primary(pk) {
+                                    malicious_addrs.push(addr.primary_to_primary);
+                                }
+                            }
+                            debug!("malicious_nodes(max={}): pks={:?}, addrs={:?}", max_malicious, malicious_keys, malicious_addrs);
                         }
                     }
 
@@ -2832,58 +2940,10 @@ impl Core {
 
                         // Turn off the async effect type
                         self.current_effect_type = AsyncEffectType::Off;
-                      
-                        //Start another async event if available
-                        /*if !self.asynchrony_start.is_empty() {
-                            self.current_effect_type = self.asynchrony_type.pop_front().unwrap();
-                            let start_offset = self.asynchrony_start.pop_front().unwrap();
-                            let end_offset = start_offset +  self.asynchrony_duration.pop_front().unwrap();
-                            
-                            let async_start = Timer::new(0, 0, start_offset);
-                            let async_end = Timer::new(0, 0, end_offset);
-    
-                            self.async_timer_futures.push(Box::pin(async_start));
-                            self.async_timer_futures.push(Box::pin(async_end));
-                        }*/
-                    
-                        
                     }
                     Ok(())
                 },
 
-                /*Some((slot, view)) = self.egress_timer_futures.next() => {
-                    
-                    //If delayed messages non empty. Pop head and send. //pop all other heads that are below current time
-                    if !self.delayed_messages.is_empty() {
-                        let curr = Instant::now().elapsed().as_millis();
-                        
-                        while !self.delayed_messages.is_empty() {
-                            //pop head and send
-                            let (_, msg, height, author, consensus_handler) = self.delayed_messages.pop_front().unwrap();
-                            debug!("sending delayed message");
-                            self.send_msg_normal(msg, height, author, consensus_handler).await;
-
-                            //look at next top; if its above wake => break.
-                            if self.delayed_messages.is_empty() || self.delayed_messages.front().unwrap().0 > curr {
-                                break;
-                            }
-                        }
-
-                        if !self.delayed_messages.is_empty() {
-                            //Start timer for next head remaining.
-                            let (wake_time, _, _, _, _) = self.delayed_messages.front().unwrap();
-                            let duration : u64 = (*wake_time - curr) as u64; 
-                            let next_wake = Timer::new(0, 0, duration);
-                            self.egress_timer_futures.push(Box::pin(next_wake));
-                        }
-                              
-                    }
-                    
-
-                
-                    Ok(())
-
-                },*/
 
                 Some(item) = self.egress_delay_queue.next() => {
                     debug!("egress msg expired, sending normally");
@@ -2905,20 +2965,35 @@ impl Core {
                 Err(e) => warn!("{}", e),
             }
 
-            // Cleanup internal state.
-            let round = self.consensus_round.load(Ordering::Relaxed);
-            if round > self.gc_depth {
-                let gc_round = round - self.gc_depth;
-                self.last_voted.retain(|k, _| k >= &gc_round);
-                //self.processing.retain(|k, _| k >= &gc_round);
+            // Cleanup in discrete steps of gc_depth using the SHORTEST lane as reference.
+            // Reference height = min(proposal heights) from the active proposal set.
+            if self.gc_depth > 0 {
+                let reference_height = {
+                    let min_opt = self.current_certified_tips.values().map(|p| p.height).min();
+                    min_opt.unwrap_or(self.current_header.height)
+                };
 
-                //self.current_headers.retain(|k, _| k >= &gc_round);
-                //self.vote_aggregators.retain(|k, _| k >= &gc_round);
+                let current_period = reference_height / self.gc_depth;
+                let last_period = self.gc_round / self.gc_depth;
+                if current_period > last_period {
+                    let cutoff = reference_height.saturating_sub(self.gc_depth);
+                    self.last_voted.retain(|h, _| *h >= cutoff);
+                    //self.processing.retain(|h, _| *h >= cutoff);
 
-                //self.certificates_aggregators.retain(|k, _| k >= &gc_round);
-                self.cancel_handlers.retain(|k, _| k >= &gc_round);
-                self.gc_round = gc_round;
-                debug!("GC round moved to {}", self.gc_round);
+                    //self.current_headers.retain(|h, _| *h >= cutoff);
+                    //self.vote_aggregators.retain(|h, _| *h >= cutoff);
+
+                    //self.certificates_aggregators.retain(|h, _| *h >= cutoff);
+                    self.cancel_handlers.retain(|h, _| *h >= cutoff);
+                    // Move gc_round to the period boundary (e.g., 5, 10, 15 when gc_depth=5)
+                    self.gc_round = current_period * self.gc_depth;
+                    debug!(
+                        "GC height window moved to {} (cutoff={}, ref_height={})",
+                        self.gc_round,
+                        cutoff,
+                        reference_height
+                    );
+                }
             }
         }
     }

@@ -89,7 +89,9 @@ pub struct QCMaker {
     pub try_fast: bool,  //TODO: Configure it for Fast path (if it's a Quorummaker for Prepare)
     qc_dig: Digest, 
     first: bool,          //Indicate when SlowQC is first ready -> I.e. only start ONE timer.
-    completed_fast: bool, //Indicate whether or not we succeeded on Fast Path. This stops timer that loopbacks from re-submitting QC
+    pub completed_fast: bool, //Indicate whether or not we succeeded on Fast Path. This stops timer that loopbacks from re-submitting QC
+    pub fast_path_disabled: bool,
+    pub sent_confirm: bool,
 }
 
 impl QCMaker {
@@ -102,6 +104,8 @@ impl QCMaker {
             qc_dig: Digest::default(),
             first: true, 
             completed_fast: false,
+            fast_path_disabled: false,
+            sent_confirm: false,
         }
     }
 
